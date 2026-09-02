@@ -1,0 +1,162 @@
+<!--
+Generated from: oci-streaming-and-stream-producer/oci-streaming-and-stream-producer.md
+Shared CSS source: BLOGGER/blogger-post.css
+Paste the complete block below into Blogger's HTML editor.
+-->
+<style>
+/*
+  Official Blogger post CSS for zigavaupot.blogspot.com.
+
+  Scope all generated article HTML with: <article class="zv-blog-post">...</article>
+*/
+
+@import url("https://fonts.googleapis.com/css2?family=Lora:wght@400&family=Open+Sans:ital,wght@0,400;0,600;0,700;1,600&display=swap");
+
+.zv-blog-post { color: #000; font-family: "Open Sans", Arial, sans-serif; font-size: 16px; line-height: 1.72; }
+.zv-blog-post h2, .zv-blog-post h3, .zv-blog-post h4 { color: #000; font-family: Lora, Georgia, serif; font-weight: 400; line-height: 1.3; }
+.zv-blog-post h2 { font-size: 28px; margin: 0 0 24px; }
+.zv-blog-post h3 { font-size: 22px; margin: 34px 0 14px; }
+.zv-blog-post h4 { font-size: 18px; margin: 28px 0 12px; }
+.zv-blog-post p { margin: 0 0 18px; }
+.zv-blog-post a { color: #132a53; font-weight: 600; text-decoration: none; }
+.zv-blog-post a:hover, .zv-blog-post a:focus { text-decoration: underline; }
+.zv-blog-post strong { font-weight: 700; }
+.zv-blog-post em { font-style: italic; }
+.zv-blog-post ul, .zv-blog-post ol { margin: 0 0 22px 26px; padding: 0; }
+.zv-blog-post li { margin: 0 0 8px; }
+.zv-blog-post code { background: #f5f6f8; border: 1px solid #e1e4ea; border-radius: 3px; color: #1f2937; font-family: Consolas, Monaco, "Courier New", monospace; font-size: 0.92em; padding: 1px 5px; }
+.zv-blog-post pre { background: #f5f6f8; border: 1px solid #dfe3ea; border-radius: 4px; color: #1f2937; font-family: Consolas, Monaco, "Courier New", monospace; font-size: 13px; line-height: 1.55; margin: 0 0 22px; overflow-x: auto; padding: 14px 16px; white-space: pre; }
+.zv-blog-post pre code { background: transparent; border: 0; color: inherit; display: block; font-size: inherit; padding: 0; }
+.zv-blog-post img { border: 0; box-sizing: border-box; display: block; height: auto; margin: 26px auto 28px; max-width: 100%; }
+.zv-blog-post p:first-child img { margin-top: 0; }
+.zv-blog-post figure { margin: 28px 0; }
+.zv-blog-post figcaption { color: rgba(0, 0, 0, 0.62); font-size: 13px; line-height: 1.45; margin-top: -16px; text-align: center; }
+.zv-blog-post blockquote { border-left: 4px solid #132a53; color: rgba(0, 0, 0, 0.72); margin: 24px 0; padding: 4px 0 4px 18px; }
+.zv-blog-post hr { border: 0; border-top: 1px solid #e1e4ea; margin: 34px 0; }
+.zv-blog-post table { border-collapse: collapse; margin: 0 0 24px; width: 100%; }
+.zv-blog-post th, .zv-blog-post td { border: 1px solid #dfe3ea; padding: 8px 10px; text-align: left; vertical-align: top; }
+.zv-blog-post th { background: #f5f6f8; font-weight: 700; }
+.zv-blog-post .zv-series-grid { display: grid; gap: 28px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 34px 0 24px; }
+.zv-blog-post .zv-series-card img { border-radius: 8px; margin: 0 0 14px; width: 100%; }
+.zv-blog-post .zv-series-card p { font-family: Lora, Georgia, serif; font-size: 22px; line-height: 1.25; margin: 0; }
+
+@media screen and (max-width: 600px) {
+  .zv-blog-post { font-size: 15px; line-height: 1.65; }
+  .zv-blog-post h2 { font-size: 24px; }
+  .zv-blog-post h3 { font-size: 20px; }
+  .zv-blog-post ul, .zv-blog-post ol { margin-left: 22px; }
+  .zv-blog-post .zv-series-grid { grid-template-columns: 1fr; }
+  .zv-blog-post .zv-series-card p { font-size: 20px; }
+}
+</style>
+
+<article class="zv-blog-post">
+  <h2>OCI Streaming and the Stream Producer (Part 2 of the AI Data Platform Series)</h2>
+
+  <p><em>This is the first technical post in the series that opened with <a href="https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html">Just Streams: Real-Time Data Pipelines on OCI</a>. That post walked through the whole TfL-bus-arrivals demo Sandi Holub and I gave at Make IT 2026 and UKOUG 2025. This one goes one layer down: the piece that gets live data into the platform in the first place — a small Python producer and an OCI Streaming topic.</em></p>
+
+  <h3>Why a plain Python producer, not Spark</h3>
+  <p>Everything downstream of this post — bronze, silver, gold — runs as a Spark Structured Streaming job on the AI Data Platform. The producer doesn't. It's a standalone Python process that polls the TfL Unified API and writes to OCI Streaming's Kafka-compatible endpoint using <code>confluent-kafka</code>.</p>
+  <p>That's a deliberate split. TfL's public API has no push/webhook mode — you poll it. Polling, deduping, and handling an unreliable third-party HTTP endpoint is exactly the kind of lightweight, stateful loop that doesn't need a cluster: a single always-on process with a small in-memory cache is enough, and it's much easier to reason about and restart than a Spark job whose only job is essentially "call <code>requests.get</code> in a loop." Spark's structured streaming engine is what the <em>bronze layer</em> uses to consume this topic — that's a different post.</p>
+
+  <h3>What the TfL API actually returns</h3>
+  <p><code>GET https://api.tfl.gov.uk/Mode/bus/Arrivals</code> (with <code>app_id</code>/<code>app_key</code> query params) returns the <strong>entire live arrivals board for every bus in London</strong> as a single JSON array — tens of thousands of predictions, one per vehicle/stop/line combination, every time you call it. There's no delta endpoint and no filtering by area in this call; you get everything, on every poll.</p>
+  <p>Each record looks roughly like:</p>
+  <pre><code>{
+  "id": "...",
+  "vehicleId": "LTZ1234",
+  "naptanId": "490008660N",
+  "stationName": "Aldgate Station",
+  "lineId": "25",
+  "lineName": "25",
+  "direction": "outbound",
+  "timeToStation": 240,
+  "expectedArrival": "2026-08-10T09:15:32Z",
+  "modeName": "bus"
+}</code></pre>
+  <p><code>expectedArrival</code> and <code>timeToStation</code> shift on almost every poll as the prediction refines, even when nothing else about the record changed. That matters for what comes next.</p>
+
+  <h3>The dedupe problem</h3>
+  <p>If you republish the full board every poll, you're not streaming — you're spamming the topic with near-duplicates. Most of a given <code>(vehicleId, naptanId, lineId, direction)</code> combination's records are the <em>same prediction</em>, seen again a poll later. Only genuinely new information — an actual change in ETA, a new vehicle appearing, one leaving the board — is worth a message.</p>
+  <p>The producer keeps a small <strong>TTL + LRU cache</strong> keyed by record <code>id</code>:</p>
+  <pre><code>class DedupeCache:
+    def __init__(self, ttl_sec: int, max_ids: int):
+        self.ttl_sec = ttl_sec
+        self.max_ids = max_ids
+        self._store: "OrderedDict[str, Tuple[str, float]]" = OrderedDict()
+
+    def is_duplicate(self, rec_id: str, fp: str) -> bool:
+        now = time.time()
+        self._evict_expired(now)
+        existing = self._store.get(rec_id)
+        if existing is not None and existing[0] == fp:
+            self._store.move_to_end(rec_id)
+            self._store[rec_id] = (fp, now)
+            return True
+        self._store[rec_id] = (fp, now)
+        self._store.move_to_end(rec_id)
+        self._evict_lru()
+        return False</code></pre>
+  <p>Each record gets a stable <strong>fingerprint</strong> — a <code>blake2b</code> hash of the JSON payload with volatile, uninteresting fields (<code>$type</code>, <code>modified</code>, <code>created</code>, <code>lastUpdated</code>) stripped out first, so a field that changes on every response without carrying new information doesn't defeat the dedupe. If the fingerprint for a given <code>id</code> hasn't changed since we last saw it (within <code>DEDUP_TTL_SEC</code>, default two hours), it's a duplicate and gets dropped. If it's new or changed, it's published and the cache is updated. <code>DEDUP_MAX_IDS</code> bounds memory with plain LRU eviction on top of the TTL.</p>
+  <p>In practice this cuts a ~15-20k-record poll down to a few hundred <em>actually new</em> records most of the time — which is the difference between a topic you can reason about and one that's just noise.</p>
+
+  <h3>Publishing to OCI Streaming</h3>
+  <p>OCI Streaming exposes a Kafka-compatible endpoint, so the producer uses <code>confluent-kafka</code>'s <code>Producer</code> directly, authenticated with SASL_SSL/PLAIN:</p>
+  <pre><code>conf = {
+    "bootstrap.servers": KAFKA_BOOTSTRAP_SERVERS,
+    "security.protocol": "SASL_SSL",
+    "sasl.mechanism": "PLAIN",
+    "sasl.username": KAFKA_USERNAME,   # &lt;tenancy&gt;/&lt;user&gt;/&lt;stream-pool-OCID&gt;
+    "sasl.password": KAFKA_PASSWORD,   # an OCI Auth Token, not your console password
+    "message.send.max.retries": 5,
+    "retry.backoff.ms": 750,
+    "socket.timeout.ms": 60000,
+    "queue.buffering.max.ms": 100,
+    "linger.ms": 50,
+    "batch.num.messages": 1000,
+    "enable.idempotence": False,  # OCI Streaming doesn't always support it well
+}</code></pre>
+  <p>A few OCI Streaming specifics worth calling out if you've only used Kafka proper before:</p>
+  <ul>
+    <li><strong>The username is a compound string</strong>, not just an OCI username: <code>&lt;tenancy-name&gt;/&lt;username-or-email&gt;/&lt;stream-pool-OCID&gt;</code>. Get any part of it wrong and you get an opaque SASL auth failure, not a helpful error.</li>
+    <li><strong>The password is an OCI Auth Token</strong>, generated per-user under <em>Identity &gt; Users &gt; Auth Tokens</em>, shown exactly once at creation time — not your console login password.</li>
+    <li><strong><code>enable.idempotence</code> is off on purpose.</strong> OCI Streaming's Kafka compatibility layer doesn't fully support the idempotent-producer protocol extensions; leaving it on causes intermittent produce failures that are hard to diagnose. Turning it off means you trade exactly-once-per-partition guarantees for retriable at-least-once delivery, which is the right trade for this pipeline (the silver layer's <code>MERGE</code> upsert makes duplicate delivery harmless downstream anyway).</li>
+  </ul>
+  <p>Records are keyed by <code>id</code> on produce, which matters once there's more than one partition — it's what would keep all messages for the same prediction routed consistently if the topic were ever repartitioned.</p>
+
+  <h3>Throughput and retries</h3>
+  <p>Two independent things can go wrong, and the producer handles them differently:</p>
+  <ol>
+    <li><strong>The TfL API call itself fails or times out.</strong> <code>fetch_tfl_arrivals()</code> retries up to <code>TFL_RETRIES</code> times with exponential backoff (<code>TFL_BACKOFF_START * 2^attempt</code>) <em>within</em> a single poll. If all retries are exhausted, the outer loop backs off further — up to <code>POLL_ERROR_BACKOFF_MAX</code> seconds — before trying again, so a rough patch on TfL's side doesn't turn into a tight failure loop.</li>
+    <li><strong>The local Kafka producer's send buffer fills up</strong> (<code>BufferError</code>), which happens if OCI Streaming is applying backpressure or is briefly unreachable. The producer does one <code>flush()</code> + retry rather than dropping the record.</li>
+  </ol>
+  <p>The bigger throughput lesson: because TfL returns the <em>entire</em> London bus board on every call, the dedupe cache isn't an optimization, it's what makes the volume tractable at all. Skip it, and every downstream component — the topic, the bronze layer, the silver <code>MERGE</code> — has to absorb 30-50x more traffic than the data actually warrants, for zero additional information.</p>
+
+  <h3>Running it</h3>
+  <pre><code>cp .env.example .env
+# fill in TFL_APP_ID/KEY and the OCI Streaming connection details
+set -a; source .env; set +a
+python3 tfl_stream_producer.py</code></pre>
+
+  <figure>
+    <img alt="OCI Streaming pool, active, with Kafka bootstrap servers visible" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/oci-streaming-and-stream-producer/images/stream-pool-active.png">
+    <figcaption>OCI Streaming pool, active, with Kafka bootstrap servers visible</figcaption>
+  </figure>
+
+  <p>Within the first poll or two you should see a steady stream of <code>[POLL]</code> lines, and the stream pool's metrics should start ticking up in the console:</p>
+
+  <figure>
+    <img alt="Producer running, publishing new records to the tfl-arrivals topic" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/oci-streaming-and-stream-producer/images/producer-running-terminal.png">
+    <figcaption>Producer running, publishing new records to the tfl-arrivals topic</figcaption>
+  </figure>
+
+  <figure>
+    <img alt="OCI Streaming pool metrics showing incoming messages" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/oci-streaming-and-stream-producer/images/stream-pool-metrics.png">
+    <figcaption>OCI Streaming pool metrics showing incoming messages</figcaption>
+  </figure>
+
+  <h3>What's next</h3>
+  <p>With records landing in <code>tfl-arrivals</code>, the next post covers the <strong>bronze layer</strong>: a Spark Structured Streaming job that reads this same topic via the Kafka API, parses the JSON payload, adds event-time partitions, and appends everything into a Delta table — the first stop for this data once it's inside the AI Data Platform itself.</p>
+
+  <p><em>Related: <a href="https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html">Just Streams: Real-Time Data Pipelines on OCI</a> (series intro)</em></p>
+</article>

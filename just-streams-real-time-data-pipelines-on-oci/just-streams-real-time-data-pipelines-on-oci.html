@@ -60,7 +60,7 @@ Paste the complete block below into Blogger's HTML editor.
   <p>At SmartQ, we like to say we master data — every kind of data. It's not just a slogan: in practice it means using the same platform for bulk loads, incremental refreshes, and real-time/streaming sources, then carrying all of it through one data platform into analytics, machine learning, and AI.</p>
 
   <figure>
-    <img alt="SmartQ's data platform capabilities — from source data through bulk load, incremental refresh, and real-time/streaming, into a unified data platform feeding analytics, ML, and AI" src="https://zigavaupot.github.io/blogger/ai-data-platform-series/just-streams-real-time-data-pipelines-on-oci/images/main-idea-architecture.png">
+    <img alt="SmartQ's data platform capabilities — from source data through bulk load, incremental refresh, and real-time/streaming, into a unified data platform feeding analytics, ML, and AI" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/just-streams-real-time-data-pipelines-on-oci/images/main-idea-architecture.png">
     <figcaption>SmartQ's data platform capabilities — from source data through bulk load, incremental refresh, and real-time/streaming, into a unified data platform feeding analytics, ML, and AI</figcaption>
   </figure>
 
@@ -70,14 +70,14 @@ Paste the complete block below into Blogger's HTML editor.
   <p>London has an extremely dense web of bus routes running through central London, and Transport for London (TfL) exposes a public API with live bus arrival predictions per stop. Instead of showing a static route map, we built a solution that reads this API in real time, streams the data through OCI, and lands it in Oracle Analytics — including the ability to have a conversation with the live data through the Oracle Analytics MCP Server.</p>
 
   <figure>
-    <img alt="Key bus routes in central London — the dense network of TfL routes that inspired the demo dataset" src="https://zigavaupot.github.io/blogger/ai-data-platform-series/just-streams-real-time-data-pipelines-on-oci/images/london-bus-routes-map.png">
+    <img alt="Key bus routes in central London — the dense network of TfL routes that inspired the demo dataset" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/just-streams-real-time-data-pipelines-on-oci/images/london-bus-routes-map.png">
     <figcaption>Key bus routes in central London — the dense network of TfL routes that inspired the demo dataset</figcaption>
   </figure>
 
   <p>During the live demo, we asked the platform a natural-language question — "If I am at Aldgate Station and I need to go to Line 25, which stations are the closest and what are the earliest arrivals at those stations?" — and got back a ranked list of nearby stations, walking distances, and live arrival times, computed from data that was streaming into the system at that very moment.</p>
 
   <figure>
-    <img alt="Live Line 25 bus map demo — a natural-language query answered from live TfL streaming data, showing nearest stations, walking distance, and next arrivals" src="https://zigavaupot.github.io/blogger/ai-data-platform-series/just-streams-real-time-data-pipelines-on-oci/images/live-bus-map-demo.png">
+    <img alt="Live Line 25 bus map demo — a natural-language query answered from live TfL streaming data, showing nearest stations, walking distance, and next arrivals" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/just-streams-real-time-data-pipelines-on-oci/images/live-bus-map-demo.png">
     <figcaption>Live Line 25 bus map demo — a natural-language query answered from live TfL streaming data, showing nearest stations, walking distance, and next arrivals</figcaption>
   </figure>
 
@@ -93,7 +93,7 @@ Paste the complete block below into Blogger's HTML editor.
   <p><strong>3. Visualization and conversation with the data in Oracle Analytics.</strong> The live streams surface in Oracle Analytics Cloud, and on top of that, they can be queried in natural language through the Oracle Analytics MCP Server.</p>
 
   <figure>
-    <img alt="The main idea: TfL API → stream producer → OCI Streaming → Spark Structured Streaming bronze/silver/gold on the AI Data Platform → Oracle Analytics Cloud and AI" src="https://zigavaupot.github.io/blogger/ai-data-platform-series/just-streams-real-time-data-pipelines-on-oci/images/main-idea-architecture.png">
+    <img alt="The main idea: TfL API → stream producer → OCI Streaming → Spark Structured Streaming bronze/silver/gold on the AI Data Platform → Oracle Analytics Cloud and AI" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/just-streams-real-time-data-pipelines-on-oci/images/main-idea-architecture.png">
     <figcaption>The main idea: TfL API → stream producer → OCI Streaming → Spark Structured Streaming bronze/silver/gold on the AI Data Platform → Oracle Analytics Cloud and AI</figcaption>
   </figure>
 
@@ -101,7 +101,7 @@ Paste the complete block below into Blogger's HTML editor.
   <p>In the live part of the session, we walked through the full AI Data Platform workspace (<code>SMARTQ_AIDP</code>) — the master catalog, the workflows (<code>tfl_bronze_layer_job</code>, <code>tfl_silver_layer_job</code>, <code>tfl_arrivals_poller</code>, the stream producer), and the Spark cluster running those jobs.</p>
 
   <figure>
-    <img alt="AI Data Platform workspace (SMARTQ_AIDP) — master catalog, workflows, and the jobs that run the bronze, silver, and streaming layers" src="https://zigavaupot.github.io/blogger/ai-data-platform-series/just-streams-real-time-data-pipelines-on-oci/images/ai-data-platform-workspace.png">
+    <img alt="AI Data Platform workspace (SMARTQ_AIDP) — master catalog, workflows, and the jobs that run the bronze, silver, and streaming layers" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/just-streams-real-time-data-pipelines-on-oci/images/ai-data-platform-workspace.png">
     <figcaption>AI Data Platform workspace (SMARTQ_AIDP) — master catalog, workflows, and the jobs that run the bronze, silver, and streaming layers</figcaption>
   </figure>
 
