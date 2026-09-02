@@ -1,3 +1,5 @@
+![Setting Oracle AI Data Platform in OCI](https://zigavaupot.github.io/blogger-ai-data-platform-series/create-aidp-workbench/images/setting-aidp.png)
+
 # Setting Up the AI Data Platform Environment
 
 *This post backs up a step from the rest of the [AI Data Platform series](https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html). Before any bronze/silver/gold Spark job can run, or a stream producer can hand data off to something downstream, the AI Data Platform (AIDP) environment itself has to exist: a Workbench, a workspace, a catalog, compute, and a place to keep secrets. This post walks through building all of that from nothing on a brand-new OCI tenancy, using the same TfL bus-arrivals demo's naming (catalog `tfl`, schemas `bronze`/`silver`/`gold`) as the throughline.*
