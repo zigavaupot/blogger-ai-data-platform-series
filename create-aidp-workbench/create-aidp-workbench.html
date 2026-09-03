@@ -37,7 +37,7 @@ Paste the complete block below into Blogger's HTML editor.
 .zv-blog-post th, .zv-blog-post td { border: 1px solid #dfe3ea; padding: 8px 10px; text-align: left; vertical-align: top; }
 .zv-blog-post th { background: #f5f6f8; font-weight: 700; }
 .zv-blog-post .zv-series-grid { display: grid; gap: 28px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 34px 0 24px; }
-.zv-blog-post .zv-series-card img { border-radius: 8px; margin: 0 0 14px; width: 100%; }
+.zv-blog-post .zv-series-card img { aspect-ratio: 16 / 9; border-radius: 8px; margin: 0 0 14px; object-fit: cover; width: 100%; }
 .zv-blog-post .zv-series-card p { font-family: Lora, Georgia, serif; font-size: 22px; line-height: 1.25; margin: 0; }
 
 @media screen and (max-width: 600px) {
@@ -58,11 +58,17 @@ Paste the complete block below into Blogger's HTML editor.
   <p><em>This post backs up a step from the rest of the <a href="https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html">AI Data Platform series</a>. Before any bronze/silver/gold Spark job can run, or a stream producer can hand data off to something downstream, the AI Data Platform (AIDP) environment itself has to exist: a Workbench, a workspace, a catalog, compute, and a place to keep secrets. This post walks through building all of that from nothing on a brand-new OCI tenancy, using the same TfL bus-arrivals demo's naming (catalog <code>tfl</code>, schemas <code>bronze</code>/<code>silver</code>/<code>gold</code>) as the throughline.</em></p>
 
   <h3>The shape of an AI Data Platform environment</h3>
-  <p>AIDP's console groups things into a hierarchy that's worth having straight before clicking anything: a <strong>Workbench</strong> instance (the top-level resource, e.g. <code>aidp001</code>) sits on an <strong>Autonomous AI Lakehouse</strong> — which isn't a separate product, just a regular Autonomous Database provisioned with workload type Lakehouse. Inside the Workbench, one or more <strong>Workspaces</strong> (<code>workspace001</code> here) each hold their own <strong>Compute</strong> clusters (managed Spark), <strong>Notebooks</strong>, and <strong>Folders</strong>. Separately, at the Workbench level, sits the <strong>Master Catalog</strong> — a Databricks-Unity-Catalog-style <code>catalog.schema.table</code> namespace shared across workspaces, with Volumes for anything that isn't a table (streaming checkpoints, mainly).</p>
+
+  <figure>
+    <img alt="Inside Oracle AIDP" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/create-aidp-workbench/images/inside-aidp.png">
+    <figcaption>Inside Oracle AIDP.</figcaption>
+  </figure>
+
+  <p>AIDP's console groups objects into a hierarchy that's worth having straight before clicking anything: a <strong>Workbench</strong> instance (the top-level resource, e.g. <code>aidp001</code>) sits on an <strong>Autonomous AI Lakehouse</strong> — which isn't a separate product, just a regular Autonomous Database provisioned with workload type Lakehouse. Inside the Workbench, one or more <strong>Workspaces</strong> (<code>workspace001</code> here) each hold their own <strong>Compute</strong> clusters (managed Spark), <strong>Notebooks</strong>, and <strong>Folders</strong>. Separately, at the Workbench level, sits the <strong>Master Catalog</strong> — a Databricks-Unity-Catalog-style <code>catalog.schema.table</code> namespace shared across workspaces, with Volumes for anything that isn't a table (streaming checkpoints, mainly).</p>
   <p>None of this is needed by the stream producer itself — that only talks to OCI Streaming. It's everything <em>downstream</em> of the producer — bronze, silver, gold, and eventually Oracle Analytics — that lives inside this environment.</p>
 
   <h3>Creating the Workbench</h3>
-  <p><strong>Analytics &amp; AI &gt; AI Data Platform Workbenches &gt; Create AI Data Platform Workbench</strong> is a single page, which is narrower than Oracle's own documentation suggests. It asks for a Workbench name and a default workspace name in one step (no separate "create workspace" screen), a Lakehouse configuration — <strong>Choose existing</strong>, <strong>Create new</strong>, or <strong>None</strong> — and a storage-encryption choice. Picking <strong>Create new</strong> for the Lakehouse only asks for two fields: a fixed <code>ADMIN</code> username and a password. There's no ECPU or storage sizing exposed at all; AIDP owns those defaults and provisions the underlying Autonomous AI Lakehouse itself.</p>
+  <p><strong>Analytics &amp; AI &gt; AI Data Platform Workbenches &gt; Create AI Data Platform Workbench</strong> is a single page. It asks for a Workbench name and a default workspace name in one step (no separate "create workspace" screen), a Lakehouse configuration — <strong>Choose existing</strong>, <strong>Create new</strong>, or <strong>None</strong> — and a storage-encryption choice. Picking <strong>Create new</strong> for the Lakehouse only asks for two fields: a fixed <code>ADMIN</code> username and a password. There's no ECPU or storage sizing exposed at all; AIDP owns those defaults and provisions the underlying Autonomous AI Lakehouse itself.</p>
   <p>The one part worth calling out in detail is the policy step. The wizard's "Add policies" section doesn't ask you to write IAM statements by hand — it shows you the exact ones it's about to create, scoped to a <strong>Standard</strong> access level by default. On a clean tenancy (<code>smartqcloud</code>, compartment <code>shared</code>), the auto-generated statements all follow the same pattern:</p>
   <pre><code>allow any-user TO {AUTHENTICATION_INSPECT, DOMAIN_INSPECT, DOMAIN_READ,
   DYNAMIC_GROUP_INSPECT, GROUP_INSPECT, GROUP_MEMBERSHIP_INSPECT,
@@ -78,7 +84,7 @@ allow any-user to manage buckets in tenancy where all
 allow any-user to manage log-groups in compartment id &lt;shared-compartment-OCID&gt;
   where ALL {request.principal.type='aidataplatform'}</code></pre>
   <p>The detail worth noticing: every statement is scoped by <code>request.principal.type='aidataplatform'</code>, not by a dynamic group. These are <code>any-user</code> grants that only ever fire when the AI Data Platform service itself is the requester — a cleaner model than the dynamic-group dance older OCI services still use, and one less resource to create and maintain by hand.</p>
-  <p>Click <strong>Add</strong>, then <strong>Create</strong>, and once the instance goes Active you land on the Workbench home page — Recent activity, quick links to enable AI features, get data, and open a notebook:</p>
+  <p>Click <strong>Add</strong>, then <strong>Create</strong>, and once the instance goes Active you land on the Workbench home page:</p>
 
   <figure>
     <img alt="AI Data Platform Workbench home page for aidp001" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/create-aidp-workbench/images/workbench-home.png">
@@ -86,22 +92,21 @@ allow any-user to manage log-groups in compartment id &lt;shared-compartment-OCI
   </figure>
 
   <h3>Building the Master Catalog</h3>
-  <p>With the Workbench up, <strong>Master Catalog &gt; Create Catalog</strong> asks for a catalog name, a type (Standard catalog is the one that matters here), and an optional compartment override — leave it matching the Workbench's own compartment unless you specifically want the catalog's storage elsewhere:</p>
+  <p>With the Workbench up, <strong>Master Catalog</strong> needs to be created first. <strong>Master Catalog &gt; Create Catalog</strong> asks for a catalog name, a type (pick Standard catalog), and an optional compartment override; leave it matching the Workbench's own compartment unless you specifically want the catalog's storage elsewhere:</p>
 
   <figure>
     <img alt="Create catalog form in Master Catalog, name tfl, Standard catalog, compartment shared" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/create-aidp-workbench/images/create-catalog-form.png">
     <figcaption>Creating the tfl catalog — Standard catalog, compartment shared.</figcaption>
   </figure>
 
-  <p>A few seconds later it shows up Active alongside the platform's own <code>default</code> catalog:</p>
+  <p>After that, we need to wait until it shows up Active alongside the platform's own <code>default</code> catalog:</p>
 
   <figure>
     <img alt="Master Catalog list showing tfl and default catalogs, both Active" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/create-aidp-workbench/images/master-catalog-tfl-created.png">
     <figcaption>tfl created and Active, next to the platform's built-in default catalog.</figcaption>
   </figure>
 
-  <p>Worth a second look here: the badge next to "Master catalog" reads <strong>Default Cluster (Accepted)</strong>. The Master Catalog has its own dedicated, system-managed Spark compute backing catalog operations — separate from anything you provision yourself — and it starts spinning up the moment you create your first catalog. That becomes relevant a couple of steps later.</p>
-  <p>Schemas and the checkpoint volume come later, once there's a cluster to run the <code>CREATE SCHEMA</code> statements from — Master Catalog's own UI doesn't have a "create schema" button independent of a running notebook.</p>
+  <p>Worth a second look here: the badge next to "Master catalog" reads <strong>Default Cluster (Accepted)</strong>. The Master Catalog has its own dedicated, system-managed Spark compute backing catalog operations. Separated from anything you provision yourself, it starts spinning up the moment you create your first catalog. That becomes relevant a couple of steps later.</p>
 
   <h3>Spinning up a Spark cluster</h3>
   <p>Workspace &gt; <strong>Compute &gt; Create Cluster</strong> offers two paths. <strong>Quickstart</strong> hands you a fixed, fairly generous preset — AMD driver and worker, 2 OCPUs / 32GB each, autoscaling 1-10 workers:</p>
@@ -111,14 +116,16 @@ allow any-user to manage log-groups in compartment id &lt;shared-compartment-OCI
     <figcaption>Quickstart's defaults — comfortable, but more than a demo actually needs.</figcaption>
   </figure>
 
-  <p><strong>Custom</strong> exposes everything: driver/worker shape, OCPUs, memory, block volume size, and whether the worker count is static or autoscaled. For this demo, with a raw TfL poll landing around 15k rows every 10 seconds (well under that after the producer's own dedupe), a single static worker at the smallest available shape is plenty:</p>
+  <p><strong>Custom</strong> exposes everything: driver/worker shape, OCPUs, memory, block volume size, and whether the worker count is static or autoscaled. For this demo, with a raw TfL poll landing around 15k rows every 10 seconds (well under that after the producer's own dedupe), a single static worker at the smallest available shape is plenty (we'll see about that, but these settings can be changed later, so let's go small first):</p>
 
   <figure>
     <img alt="Create cluster form, Custom configuration, driver 1 OCPU/16GB, worker 1 OCPU/16GB/100GB, static 1 worker, named tfl_cluster" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/create-aidp-workbench/images/create-cluster-custom-sizing.png">
     <figcaption>Right-sized down: 1 OCPU/16GB driver and worker, static single worker, named tfl_cluster.</figcaption>
   </figure>
 
-  <p>Hit Create, and — notice this — <em>two</em> clusters start Creating, not one: <code>tfl_cluster</code>, and a second, system-managed <strong>Default Master Catalog Compute</strong> cluster that came along for the ride from the catalog step above.</p>
+  <p>Hit Create, and, notice that, <em>two</em> clusters start Creating, not one: <code>tfl_cluster</code>, and a second, system-managed <strong>Default Master Catalog Compute</strong> cluster that came along for the ride from the catalog step above.</p>
+
+  <p>This <em>creating</em> step can take some time, so just wait until it's done.</p>
 
   <figure>
     <img alt="Compute list showing tfl_cluster and Default Master Catalog Compute both in Creating state" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/create-aidp-workbench/images/compute-clusters-creating.png">
@@ -132,10 +139,10 @@ allow any-user to manage log-groups in compartment id &lt;shared-compartment-OCI
     <figcaption>tfl_cluster (4 active cores) and Default Master Catalog Compute (8 active cores) both Active.</figcaption>
   </figure>
 
-  <p>One thing not to be alarmed by along the way: the async-operations panel briefly showed the Default Master Catalog cluster's <code>CREATE_CLUSTER</code> operation as <strong>Canceled</strong> partway through, before it went on to finish normally. Nothing needed doing about it — it self-resolved into Creating, then Active, on its own.</p>
+  <p>One thing not to be alarmed by along the way: the async-operations panel briefly showed the Default Master Catalog cluster's <code>CREATE_CLUSTER</code> operation as <strong>Canceled</strong> partway through, before it went on to finish normally. Nothing needed doing about it. It self-resolved into Creating, then Active, on its own.</p>
 
   <h3>Creating the schemas and the checkpoint volume</h3>
-  <p>Schemas get created from SQL, run inside a notebook attached to a live cluster — there's no separate console form for it. <strong>Create &gt; Notebook</strong>, name it (<code>tfl_setup.ipynb</code>), and it opens unattached, defaulting to Python:</p>
+  <p>Schemas get created from SQL, run inside a notebook attached to a live cluster. There's no separate console form for it. <strong>Create &gt; Notebook</strong>, name it (<code>tfl_setup.ipynb</code>), and it opens unattached, defaulting to Python:</p>
 
   <figure>
     <img alt="New notebook tfl_setup.ipynb, no cluster attached, Language Python" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/create-aidp-workbench/images/notebook-created-no-cluster.png">
@@ -149,7 +156,7 @@ allow any-user to manage log-groups in compartment id &lt;shared-compartment-OCI
     <figcaption>Attaching the notebook to tfl_cluster via Attach existing cluster.</figcaption>
   </figure>
 
-  <p>Switch the notebook's language from Python to SQL, then run:</p>
+  <p>Switch the notebook's language from <strong>Python</strong> to <strong>SQL</strong>, then run:</p>
   <pre><code>CREATE SCHEMA IF NOT EXISTS tfl.bronze;
 CREATE SCHEMA IF NOT EXISTS tfl.silver;
 CREATE SCHEMA IF NOT EXISTS tfl.gold;
@@ -167,7 +174,7 @@ CREATE VOLUME IF NOT EXISTS tfl.gold.tfl_volume;</code></pre>
     <figcaption>Spark's own UI confirms the job succeeded end to end.</figcaption>
   </figure>
 
-  <p>— and, more directly, going back to Master Catalog and looking at what's actually there:</p>
+  <p>... and, more directly, going back to Master Catalog and looking at what's actually there:</p>
 
   <figure>
     <img alt="tfl catalog Schemas tab listing gold, silver, bronze, and default schemas, all Active" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/create-aidp-workbench/images/catalog-tfl-schemas-active.png">
@@ -177,7 +184,7 @@ CREATE VOLUME IF NOT EXISTS tfl.gold.tfl_volume;</code></pre>
   <p><code>gold.tfl_volume</code> shows up the same way, empty and Active, ready for the silver layer's streaming checkpoint later in the series.</p>
 
   <h3>Vault and secrets for the Kafka credentials</h3>
-  <p>The old version of this demo read its OCI Streaming credentials out of OCI Vault via an <code>aidputils.secrets.get(...)</code> helper, and the same approach carries over here — with one console change worth flagging up front: secrets have moved out of the classic Vault UI into a dedicated <strong>Secrets Management</strong> console under Identity &amp; Security. Docs and blog posts describing secrets as a tab inside Vault are describing an older layout.</p>
+  <p>The old version of this demo read its OCI Streaming credentials out of OCI Vault via an <code>aidputils.secrets.get(...)</code> helper, and the same approach carries over here — with one console change worth flagging up front: secrets have moved out of the classic Vault UI into a dedicated <strong>Secrets Management</strong> console under Identity &amp; Security.</p>
   <p>Rather than reuse a vault that already backs other workloads in the tenancy, this gets its own: <strong>Identity &amp; Security &gt; Vault &gt; Create Vault</strong>, named <code>tfl-aidp-vault</code>, in the <code>shared</code> compartment:</p>
 
   <figure>
@@ -192,21 +199,21 @@ CREATE VOLUME IF NOT EXISTS tfl.gold.tfl_volume;</code></pre>
     <figcaption>tfl-aidp-key: AES, 256-bit.</figcaption>
   </figure>
 
-  <p>One correction against the console worth noting: OCI Vault keys default to <strong>HSM</strong> protection mode (hardware-backed), not Software — the key list confirms it as Enabled, HSM, AES:</p>
+  <p>OCI Vault keys default to <strong>HSM</strong> protection mode (hardware-backed). Once created, the key list confirms it as Enabled, HSM, AES:</p>
 
   <figure>
     <img alt="Master encryption keys list showing tfl-aidp-key, Enabled, HSM protection mode, AES algorithm" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/create-aidp-workbench/images/master-encryption-keys-list.png">
     <figcaption>Note the terminology: vaults show Active, but keys show Enabled.</figcaption>
   </figure>
 
-  <p>With the vault and key in place, <strong>Identity &amp; Security &gt; Secret Management</strong> is where the actual secrets get created — starting empty, scoped to the vault:</p>
+  <p>With the vault and key in place, <strong>Identity &amp; Security &gt; Secret Management</strong> is where the actual secrets get created. Starting empty, scoped to the vault:</p>
 
   <figure>
     <img alt="Secrets Management console, empty, filtered to compartment shared and vault tfl-aidp-vault" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/create-aidp-workbench/images/secrets-management-empty.png">
     <figcaption>The new Secrets Management console — separate from the Vault UI, filtered by compartment and vault.</figcaption>
   </figure>
 
-  <p><strong>Create Secret</strong> matters in one specific way: the form defaults to <strong>Automatic secret generation</strong> (a randomly generated passphrase), which is the wrong choice here — <code>KAFKA_USERNAME</code> and <code>KAFKA_PASSWORD</code> are specific, known-shape values (a compound OCI Streaming username, and an OCI Auth Token), not something the console should invent. Switching to <strong>Manual secret generation</strong> exposes a plain text box instead:</p>
+  <p>The <strong>Create secret</strong> form defaults to <strong>Automatic secret generation</strong> (a randomly generated passphrase), which is the wrong choice here. We will use <code>KAFKA_USERNAME</code> and <code>KAFKA_PASSWORD</code>, which are specific, known-shape values (a compound OCI Streaming username, and an OCI Auth Token). Switch to <strong>Manual secret generation</strong> exposes a plain text box instead:</p>
 
   <figure>
     <img alt="Create secret form for tfl-kafka-usr, Manual secret generation, Plain-Text template, placeholder contents" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/create-aidp-workbench/images/create-secret-kafka-usr-manual.png">
@@ -218,7 +225,7 @@ CREATE VOLUME IF NOT EXISTS tfl.gold.tfl_volume;</code></pre>
     <figcaption>tfl-kafka-pwd — same approach, placeholder pending a real OCI Auth Token.</figcaption>
   </figure>
 
-  <p>Both secrets exist as placeholders at this point, deliberately — provisioning the actual OCI Streaming pool and generating a real Auth Token belongs to this series' next stage, not to environment setup. OCI Vault versions secrets, so swapping in real values later is a new secret <em>version</em>, not a delete-and-recreate:</p>
+  <p>Both secrets exist as placeholders at this point. We did it deliberately ad will get back to this setting later in series when we define OCI Streaming. OCI Vault versions secrets, so swapping in real values later is a new secret <em>version</em>, not a delete-and-recreate:</p>
 
   <figure>
     <img alt="Secrets list showing tfl-kafka-usr and tfl-kafka-pwd, both Active" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/create-aidp-workbench/images/secrets-list-active.png">
