@@ -8,7 +8,16 @@
 
   <!--more-->
 
-  <p>In this post I'll cover both halves of getting live data flowing: the console side (creating the stream pool and topic, and deciding how to handle credentials) and the code side (why this is a plain Python process rather than a Spark job, what the TfL API's payload actually looks like, how the in-memory dedupe logic works, and how records get published to OCI Streaming with retries). I'll also cover where the producer actually runs day to day — not on my laptop, but on a small, always-on OCI Compute VM — and how I wired it up as a systemd service so it survives reboots and restarts on its own.</p>
+<p>In this post I'll walk through both halves of getting live data flowing from TfL's API into OCI Streaming, and where the producer actually lives once it's running for real:</p>
+
+<ul>
+<li><strong>Setting up OCI Streaming</strong> — creating the stream pool and topic in the console, and deciding whether to authenticate as my own OCI user or a dedicated service user.</li>
+<li><strong>Why a plain Python process, not a Spark job</strong> — the reasoning behind keeping the producer outside AIDP entirely.</li>
+<li><strong>What the TfL API actually returns</strong> — the shape of a real arrival-prediction payload, and a few quirks worth knowing before you build against it.</li>
+<li><strong>The dedupe problem</strong> — how an in-memory cache stops the same prediction from being published over and over as TfL's API keeps re-serving it.</li>
+<li><strong>Publishing to OCI Streaming</strong> — how records actually get produced onto the topic, with retries for the transient failures that are bound to happen.</li>
+<li><strong>Running it long-term</strong> — moving the producer off my laptop and onto a small, always-on OCI Compute VM, wired up as a systemd service so it survives reboots and restarts on its own.</li>
+</ul>
 
   <h2>Setting up OCI Streaming</h2>
   <p>All of this lives in the same <code>shared</code> compartment I've been using since the AIDP setup — no new compartment needed for a demo.</p>

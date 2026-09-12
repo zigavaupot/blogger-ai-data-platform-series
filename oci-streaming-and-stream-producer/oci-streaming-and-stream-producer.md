@@ -4,7 +4,14 @@
 
 *This is the first technical post in the series that opened with [Just Streams: Real-Time Data Pipelines on OCI](https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html). That post walked through the whole TfL-bus-arrivals demo Sandi Holub and I gave at Make IT 2026 and UKOUG 2025. This one goes one layer down: the piece that gets live data into the platform in the first place — a small Python producer and an OCI Streaming topic.*
 
-In this post I'll cover both halves of getting live data flowing: the console side (creating the stream pool and topic, and deciding how to handle credentials) and the code side (why this is a plain Python process rather than a Spark job, what the TfL API's payload actually looks like, how the in-memory dedupe logic works, and how records get published to OCI Streaming with retries). I'll also cover where the producer actually runs day to day — not on my laptop, but on a small, always-on OCI Compute VM — and how I wired it up as a systemd service so it survives reboots and restarts on its own.
+In this post I'll walk through both halves of getting live data flowing from TfL's API into OCI Streaming, and where the producer actually lives once it's running for real:
+
+- **Setting up OCI Streaming** — creating the stream pool and topic in the console, and deciding whether to authenticate as my own OCI user or a dedicated service user.
+- **Why a plain Python process, not a Spark job** — the reasoning behind keeping the producer outside AIDP entirely.
+- **What the TfL API actually returns** — the shape of a real arrival-prediction payload, and a few quirks worth knowing before you build against it.
+- **The dedupe problem** — how an in-memory cache stops the same prediction from being published over and over as TfL's API keeps re-serving it.
+- **Publishing to OCI Streaming** — how records actually get produced onto the topic, with retries for the transient failures that are bound to happen.
+- **Running it long-term** — moving the producer off my laptop and onto a small, always-on OCI Compute VM, wired up as a systemd service so it survives reboots and restarts on its own.
 
 ## Setting up OCI Streaming
 
