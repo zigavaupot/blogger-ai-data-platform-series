@@ -8,3 +8,6 @@ This is summary blog post with references to posts published under **AI Data Pla
 
 ![Setting Up the AI Data Platform Environment](https://zigavaupot.github.io/blogger-ai-data-platform-series/create-aidp-workbench/images/setting-aidp.png)
 [Setting Up the AI Data Platform Environment](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-setting-up-ai.html)
+
+![OCI Streaming and Stream Producer](https://zigavaupot.github.io/blogger-ai-data-platform-series/oci-streaming-and-stream-producer/images/oci-streaming-to-aidp.png)
+[OCI Streaming and Stream Producer](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-oci-streaming.html)
