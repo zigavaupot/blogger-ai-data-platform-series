@@ -1,61 +1,14 @@
-<!--
-Generated from: oci-streaming-and-stream-producer/oci-streaming-and-stream-producer.md
-Shared CSS source: BLOGGER/blogger-post.css
-Paste the complete block below into Blogger's HTML editor.
--->
-<style>
-/*
-  Official Blogger post CSS for zigavaupot.blogspot.com.
-
-  Scope all generated article HTML with: <article class="zv-blog-post">...</article>
-*/
-
-@import url("https://fonts.googleapis.com/css2?family=Lora:wght@400&family=Open+Sans:ital,wght@0,400;0,600;0,700;1,600&display=swap");
-
-.zv-blog-post { color: #000; font-family: "Open Sans", Arial, sans-serif; font-size: 16px; line-height: 1.72; }
-.zv-blog-post h2, .zv-blog-post h3, .zv-blog-post h4 { color: #000; font-family: Lora, Georgia, serif; font-weight: 400; line-height: 1.3; }
-.zv-blog-post h2 { font-size: 28px; margin: 0 0 24px; }
-.zv-blog-post h3 { font-size: 22px; margin: 34px 0 14px; }
-.zv-blog-post h4 { font-size: 18px; margin: 28px 0 12px; }
-.zv-blog-post p { margin: 0 0 18px; }
-.zv-blog-post a { color: #132a53; font-weight: 600; text-decoration: none; }
-.zv-blog-post a:hover, .zv-blog-post a:focus { text-decoration: underline; }
-.zv-blog-post strong { font-weight: 700; }
-.zv-blog-post em { font-style: italic; }
-.zv-blog-post ul, .zv-blog-post ol { margin: 0 0 22px 26px; padding: 0; }
-.zv-blog-post li { margin: 0 0 8px; }
-.zv-blog-post code { background: #f5f6f8; border: 1px solid #e1e4ea; border-radius: 3px; color: #1f2937; font-family: Consolas, Monaco, "Courier New", monospace; font-size: 0.92em; padding: 1px 5px; }
-.zv-blog-post pre { background: #f5f6f8; border: 1px solid #dfe3ea; border-radius: 4px; color: #1f2937; font-family: Consolas, Monaco, "Courier New", monospace; font-size: 13px; line-height: 1.55; margin: 0 0 22px; overflow-x: auto; padding: 14px 16px; white-space: pre; }
-.zv-blog-post pre code { background: transparent; border: 0; color: inherit; display: block; font-size: inherit; padding: 0; }
-.zv-blog-post img { border: 0; box-sizing: border-box; display: block; height: auto; margin: 26px auto 28px; max-width: 100%; }
-.zv-blog-post p:first-child img { margin-top: 0; }
-.zv-blog-post figure { margin: 28px 0; }
-.zv-blog-post figcaption { color: rgba(0, 0, 0, 0.62); font-size: 13px; line-height: 1.45; margin-top: -16px; text-align: center; }
-.zv-blog-post blockquote { border-left: 4px solid #132a53; color: rgba(0, 0, 0, 0.72); margin: 24px 0; padding: 4px 0 4px 18px; }
-.zv-blog-post hr { border: 0; border-top: 1px solid #e1e4ea; margin: 34px 0; }
-.zv-blog-post table { border-collapse: collapse; margin: 0 0 24px; width: 100%; }
-.zv-blog-post th, .zv-blog-post td { border: 1px solid #dfe3ea; padding: 8px 10px; text-align: left; vertical-align: top; }
-.zv-blog-post th { background: #f5f6f8; font-weight: 700; }
-.zv-blog-post .zv-series-grid { display: grid; gap: 28px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 34px 0 24px; }
-.zv-blog-post .zv-series-card img { border-radius: 8px; margin: 0 0 14px; width: 100%; }
-.zv-blog-post .zv-series-card p { font-family: Lora, Georgia, serif; font-size: 22px; line-height: 1.25; margin: 0; }
-
-@media screen and (max-width: 600px) {
-  .zv-blog-post { font-size: 15px; line-height: 1.65; }
-  .zv-blog-post h2 { font-size: 24px; }
-  .zv-blog-post h3 { font-size: 20px; }
-  .zv-blog-post ul, .zv-blog-post ol { margin-left: 22px; }
-  .zv-blog-post .zv-series-grid { grid-template-columns: 1fr; }
-  .zv-blog-post .zv-series-card p { font-size: 20px; }
-}
-</style>
-
 <article class="zv-blog-post">
-  <h2>OCI Streaming and the Stream Producer (Part 2 of the AI Data Platform Series)</h2>
 
-  <p><em>This is the first technical post in the series that opened with <a href="https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html">Just Streams: Real-Time Data Pipelines on OCI</a>. That post walked through the whole TfL-bus-arrivals demo Sandi Holub and I gave at Make IT 2026 and UKOUG 2025. This one goes one layer down: the piece that gets live data into the platform in the first place — a small Python producer and an OCI Streaming topic.</em></p>
+  <img alt="OCI Streaming and Stream Producer — from TfL live bus arrivals through a Python stream producer on OCI Compute (filter, deduplicate, transform) into the OCI Streaming tfl-arrivals topic, feeding the AI Data Platform's Spark bronze layer next in the series" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/oci-streaming-and-stream-producer/images/oci-streaming-to-aidp.png">
 
-  <h3>Setting up OCI Streaming</h3>
+  <div class="post-intro">
+    <p>This is the first technical post in the series that opened with <a href="https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html">Just Streams: Real-Time Data Pipelines on OCI</a>. That post walked through the whole TfL-bus-arrivals demo Sandi Holub and I gave at Make IT 2026 and UKOUG 2025. This one goes one layer down: the piece that gets live data into the platform in the first place — a small Python producer and an OCI Streaming topic.</p>
+  </div>
+
+  <!--more-->
+
+  <h2>Setting up OCI Streaming</h2>
   <p>All of this lives in the same <code>shared</code> compartment I've been using since the AIDP setup — no new compartment needed for a demo.</p>
   <p><strong>Stream pool.</strong> Analytics &amp; AI &gt; Messaging &gt; Streaming &gt; Stream Pools &gt; Create Stream Pool. I named mine <code>tfl-stream-pool</code>, picked a public endpoint (this demo doesn't need a private one), and left encryption on Oracle-managed keys.</p>
 
@@ -81,11 +34,11 @@ Paste the complete block below into Blogger's HTML editor.
   <p><strong>Credentials, the simple way.</strong> I considered creating a dedicated <code>svc-tfl-producer</code> OCI user with a narrowly-scoped policy, but for a demo — where I already have admin rights on this tenancy — that's setup effort without adding real access control. I used my own user instead: the Kafka connection settings tab above already gives the username, and Identity &amp; Security &gt; Domains &gt; (domain) &gt; Users &gt; (my user) &gt; Auth Tokens &gt; Generate Token gives the password (shown exactly once — copy it immediately). If this producer ever needed to run unattended in a real production pipeline, that's the point where a dedicated service user would earn its keep.</p>
   <p><strong>TfL credentials.</strong> Register at api-portal.tfl.gov.uk, confirm your email, then subscribe to the free "500 Requests per min" product under Products. Your Primary key (visible on the Profile page) is <code>TFL_APP_KEY</code>. One thing that tripped me up briefly: older TfL examples also expect an <code>app_id</code> — that's deprecated now, the portal only issues a subscription key, and the producer treats <code>TFL_APP_ID</code> as optional.</p>
 
-  <h3>Why a plain Python producer, not Spark</h3>
+  <h2>Why a plain Python producer, not Spark</h2>
   <p>Everything downstream of this post — bronze, silver, gold — runs as a Spark Structured Streaming job on the AI Data Platform. The producer doesn't. It's a standalone Python process that polls the TfL Unified API and writes to OCI Streaming's Kafka-compatible endpoint using <code>confluent-kafka</code>.</p>
   <p>That's a deliberate split. TfL's public API has no push/webhook mode — you poll it. Polling, deduping, and handling an unreliable third-party HTTP endpoint is exactly the kind of lightweight, stateful loop that doesn't need a cluster: a single always-on process with a small in-memory cache is enough, and it's much easier to reason about and restart than a Spark job whose only job is essentially "call <code>requests.get</code> in a loop." Spark's structured streaming engine is what the <em>bronze layer</em> uses to consume this topic — that's a different post.</p>
 
-  <h3>What the TfL API actually returns</h3>
+  <h2>What the TfL API actually returns</h2>
   <p><code>GET https://api.tfl.gov.uk/Mode/bus/Arrivals</code> (with an <code>app_key</code> query param) returns the <strong>entire live arrivals board for every bus in London</strong> as a single JSON array — tens of thousands of predictions, one per vehicle/stop/line combination, every time you call it. There's no delta endpoint and no filtering by area in this call; you get everything, on every poll.</p>
   <p>Each record looks roughly like:</p>
   <pre><code>{
@@ -102,7 +55,7 @@ Paste the complete block below into Blogger's HTML editor.
 }</code></pre>
   <p><code>expectedArrival</code> and <code>timeToStation</code> shift on almost every poll as the prediction refines, even when nothing else about the record changed. That matters for what comes next.</p>
 
-  <h3>The dedupe problem</h3>
+  <h2>The dedupe problem</h2>
   <p>If you republish the full board every poll, you're not streaming — you're spamming the topic with near-duplicates. Most of a given <code>(vehicleId, naptanId, lineId, direction)</code> combination's records are the <em>same prediction</em>, seen again a poll later. Only genuinely new information — an actual change in ETA, a new vehicle appearing, one leaving the board — is worth a message.</p>
   <p>The producer keeps a small <strong>TTL + LRU cache</strong> keyed by record <code>id</code>:</p>
   <pre><code>class DedupeCache:
@@ -126,7 +79,7 @@ Paste the complete block below into Blogger's HTML editor.
   <p>Each record gets a stable <strong>fingerprint</strong> — a <code>blake2b</code> hash of the JSON payload with volatile, uninteresting fields (<code>$type</code>, <code>modified</code>, <code>created</code>, <code>lastUpdated</code>) stripped out first, so a field that changes on every response without carrying new information doesn't defeat the dedupe. If the fingerprint for a given <code>id</code> hasn't changed since we last saw it (within <code>DEDUP_TTL_SEC</code>, default two hours), it's a duplicate and gets dropped. If it's new or changed, it's published and the cache is updated. <code>DEDUP_MAX_IDS</code> bounds memory with plain LRU eviction on top of the TTL.</p>
   <p>In practice this cuts a ~15-20k-record poll down to a few hundred <em>actually new</em> records most of the time — which is the difference between a topic you can reason about and one that's just noise.</p>
 
-  <h3>Publishing to OCI Streaming</h3>
+  <h2>Publishing to OCI Streaming</h2>
   <p>OCI Streaming exposes a Kafka-compatible endpoint, so the producer uses <code>confluent-kafka</code>'s <code>Producer</code> directly, authenticated with SASL_SSL/PLAIN:</p>
   <pre><code>conf = {
     "bootstrap.servers": KAFKA_BOOTSTRAP_SERVERS,
@@ -150,7 +103,7 @@ Paste the complete block below into Blogger's HTML editor.
   </ul>
   <p>Records are keyed by <code>id</code> on produce, which matters once there's more than one partition — it's what would keep all messages for the same prediction routed consistently if the topic were ever repartitioned.</p>
 
-  <h3>Throughput and retries</h3>
+  <h2>Throughput and retries</h2>
   <p>Two independent things can go wrong, and the producer handles them differently:</p>
   <ol>
     <li><strong>The TfL API call itself fails or times out.</strong> <code>fetch_tfl_arrivals()</code> retries up to <code>TFL_RETRIES</code> times with exponential backoff (<code>TFL_BACKOFF_START * 2^attempt</code>) <em>within</em> a single poll. If all retries are exhausted, the outer loop backs off further — up to <code>POLL_ERROR_BACKOFF_MAX</code> seconds — before trying again, so a rough patch on TfL's side doesn't turn into a tight failure loop.</li>
@@ -158,7 +111,7 @@ Paste the complete block below into Blogger's HTML editor.
   </ol>
   <p>The bigger throughput lesson: because TfL returns the <em>entire</em> London bus board on every call, the dedupe cache isn't an optimization, it's what makes the volume tractable at all. Skip it, and every downstream component — the topic, the bronze layer, the silver <code>MERGE</code> — has to absorb 30-50x more traffic than the data actually warrants, for zero additional information.</p>
 
-  <h3>Running it — a one-time laptop check</h3>
+  <h2>Running it — a one-time laptop check</h2>
   <pre><code>cp .env.example .env
 # fill in TFL_APP_KEY and the OCI Streaming connection details from the
 # Kafka connection settings tab above
@@ -179,7 +132,7 @@ python3 tfl_stream_producer.py</code></pre>
 
   <p>Running it like this — from a laptop, in the foreground — is only good for one thing: confirming the wiring works end to end. It's not a home for a process meant to run continuously across demos.</p>
 
-  <h3>From a laptop to an OCI Compute VM</h3>
+  <h2>From a laptop to an OCI Compute VM</h2>
   <p>I considered three ways to host this properly, and ruled out two of them fast:</p>
   <ul>
     <li><strong>OCI Functions</strong> — built for short-lived, event-triggered invocations with an execution time cap. This producer polls forever and keeps an in-memory dedupe cache across polls; a cold-started function loses that cache on every restart, which defeats the entire point of deduping.</li>
@@ -254,7 +207,7 @@ Sep 12 13:15:56 tfl-producer-vm python3[46418]: [POLL] iter=4 fetched=15672 publ
   <p>That last line is the dedupe cache doing exactly its job — one poll later, almost the entire board was unchanged.</p>
   <p>From here the producer runs independently of any laptop — it starts with the VM, restarts itself if it crashes, and the only ongoing cost discipline is the same one I already use for the AIDP compute clusters: start the instance before a demo, stop it after.</p>
 
-  <h3>What's next</h3>
+  <h2>What's next</h2>
   <p>With records landing in <code>tfl-arrivals</code>, the next post covers the <strong>bronze layer</strong>: a Spark Structured Streaming job that reads this same topic via the Kafka API, parses the JSON payload, adds event-time partitions, and appends everything into a Delta table — the first stop for this data once it's inside the AI Data Platform itself.</p>
 
   <p><em>Related: <a href="https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html">Just Streams: Real-Time Data Pipelines on OCI</a> (series intro)</em></p>

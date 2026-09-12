@@ -1,62 +1,12 @@
-<!--
-Generated from: ai-data-platform-series/just-streams-real-time-data-pipelines-on-oci/just-streams-real-time-data-pipelines-on-oci.md
-Shared CSS source: BLOGGER/blogger-post.css
-Paste the complete block below into Blogger's HTML editor.
--->
-<style>
-/*
-  Official Blogger post CSS for zigavaupot.blogspot.com. 
-
-  Scope all generated article HTML with: <article class="zv-blog-post">...</article>
-*/
-
-@import url("https://fonts.googleapis.com/css2?family=Lora:wght@400&family=Open+Sans:ital,wght@0,400;0,600;0,700;1,600&display=swap");
-
-.zv-blog-post { color: #000; font-family: "Open Sans", Arial, sans-serif; font-size: 16px; line-height: 1.72; }
-.zv-blog-post h2, .zv-blog-post h3, .zv-blog-post h4 { color: #000; font-family: Lora, Georgia, serif; font-weight: 400; line-height: 1.3; }
-.zv-blog-post h2 { font-size: 28px; margin: 0 0 24px; }
-.zv-blog-post h3 { font-size: 22px; margin: 34px 0 14px; }
-.zv-blog-post h4 { font-size: 18px; margin: 28px 0 12px; }
-.zv-blog-post p { margin: 0 0 18px; }
-.zv-blog-post a { color: #132a53; font-weight: 600; text-decoration: none; }
-.zv-blog-post a:hover, .zv-blog-post a:focus { text-decoration: underline; }
-.zv-blog-post strong { font-weight: 700; }
-.zv-blog-post em { font-style: italic; }
-.zv-blog-post ul, .zv-blog-post ol { margin: 0 0 22px 26px; padding: 0; }
-.zv-blog-post li { margin: 0 0 8px; }
-.zv-blog-post code { background: #f5f6f8; border: 1px solid #e1e4ea; border-radius: 3px; color: #1f2937; font-family: Consolas, Monaco, "Courier New", monospace; font-size: 0.92em; padding: 1px 5px; }
-.zv-blog-post pre { background: #f5f6f8; border: 1px solid #dfe3ea; border-radius: 4px; color: #1f2937; font-family: Consolas, Monaco, "Courier New", monospace; font-size: 13px; line-height: 1.55; margin: 0 0 22px; overflow-x: auto; padding: 14px 16px; white-space: pre; }
-.zv-blog-post pre code { background: transparent; border: 0; color: inherit; display: block; font-size: inherit; padding: 0; }
-.zv-blog-post img { border: 0; box-sizing: border-box; display: block; height: auto; margin: 26px auto 28px; max-width: 100%; }
-.zv-blog-post p:first-child img { margin-top: 0; }
-.zv-blog-post figure { margin: 28px 0; }
-.zv-blog-post figcaption { color: rgba(0, 0, 0, 0.62); font-size: 13px; line-height: 1.45; margin-top: -16px; text-align: center; }
-.zv-blog-post blockquote { border-left: 4px solid #132a53; color: rgba(0, 0, 0, 0.72); margin: 24px 0; padding: 4px 0 4px 18px; }
-.zv-blog-post hr { border: 0; border-top: 1px solid #e1e4ea; margin: 34px 0; }
-.zv-blog-post table { border-collapse: collapse; margin: 0 0 24px; width: 100%; }
-.zv-blog-post th, .zv-blog-post td { border: 1px solid #dfe3ea; padding: 8px 10px; text-align: left; vertical-align: top; }
-.zv-blog-post th { background: #f5f6f8; font-weight: 700; }
-.zv-blog-post .zv-series-grid { display: grid; gap: 28px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 34px 0 24px; }
-.zv-blog-post .zv-series-card img { border-radius: 8px; margin: 0 0 14px; width: 100%; }
-.zv-blog-post .zv-series-card p { font-family: Lora, Georgia, serif; font-size: 22px; line-height: 1.25; margin: 0; }
-
-@media screen and (max-width: 600px) {
-  .zv-blog-post { font-size: 15px; line-height: 1.65; }
-  .zv-blog-post h2 { font-size: 24px; }
-  .zv-blog-post h3 { font-size: 20px; }
-  .zv-blog-post ul, .zv-blog-post ol { margin-left: 22px; }
-  .zv-blog-post .zv-series-grid { grid-template-columns: 1fr; }
-  .zv-blog-post .zv-series-card p { font-size: 20px; }
-}
-</style>
-
 <article class="zv-blog-post">
-  <h2>Just Streams: Real-Time Data Pipelines on OCI (Part 1 of a Series)</h2>
 
-  <p><em>Together with Sandi Holub, I presented "Just Streams: Real-Time Data Pipelines in OCI – With a Live Demo Twist" at the Make IT 2026 conference in Portorož (28 May 2026). Sandi and I actually first presented this same session at the UKOUG conference in Birmingham back in December 2025, but it's only now that I've found the time to write more about it.</em></p>
-  <p><em>We deliberately kept the slide deck short and let a live demo carry most of the session. This post is the written recap of that story, and also the opening post in a series where I'll break the solution down layer by layer.</em></p>
+  <div class="post-intro">
+    <p>Together with Sandi Holub, I presented "Just Streams: Real-Time Data Pipelines in OCI – With a Live Demo Twist" at the Make IT 2026 conference in Portorož (28 May 2026). Sandi and I actually first presented this same session at the UKOUG conference in Birmingham back in December 2025, but it's only now that I've found the time to write more about it. We deliberately kept the slide deck short and let a live demo carry most of the session. This post is the written recap of that story, and also the opening post in a series where I'll break the solution down layer by layer.</p>
+  </div>
 
-  <h3>Why "Just Streams"</h3>
+  <!--more-->
+
+  <h2>Why "Just Streams"</h2>
   <p>At SmartQ, we like to say we master data — every kind of data. It's not just a slogan: in practice it means using the same platform for bulk loads, incremental refreshes, and real-time/streaming sources, then carrying all of it through one data platform into analytics, machine learning, and AI.</p>
 
   <figure>
@@ -66,7 +16,7 @@ Paste the complete block below into Blogger's HTML editor.
 
   <p>For the conference demo, we wanted something instantly relatable but "alive" enough to show the platform's real streaming nature — so we picked London and its bus network.</p>
 
-  <h3>Setting the scene: London's bus network</h3>
+  <h2>Setting the scene: London's bus network</h2>
   <p>London has an extremely dense web of bus routes running through central London, and Transport for London (TfL) exposes a public API with live bus arrival predictions per stop. Instead of showing a static route map, we built a solution that reads this API in real time, streams the data through OCI, and lands it in Oracle Analytics — including the ability to have a conversation with the live data through the Oracle Analytics MCP Server.</p>
 
   <figure>
@@ -81,7 +31,7 @@ Paste the complete block below into Blogger's HTML editor.
     <figcaption>Live Line 25 bus map demo — a natural-language query answered from live TfL streaming data, showing nearest stations, walking distance, and next arrivals</figcaption>
   </figure>
 
-  <h3>The core architecture</h3>
+  <h2>The core architecture</h2>
   <p>The solution is built around three steps, each of which I'll cover in its own dedicated post later in this series.</p>
   <p><strong>1. Stream producer.</strong> A producer continuously pulls live bus arrival data from the TfL API and streams new records into an OCI Streaming (Kafka-compatible) topic. This is the entry point of data into the platform — the place where raw JSON events first land inside the Oracle ecosystem.</p>
   <p><strong>2. Spark Structured Streaming across three layers (bronze/silver/gold),</strong> running on the AI Data Platform:</p>
@@ -97,7 +47,7 @@ Paste the complete block below into Blogger's HTML editor.
     <figcaption>The main idea: TfL API → stream producer → OCI Streaming → Spark Structured Streaming bronze/silver/gold on the AI Data Platform → Oracle Analytics Cloud and AI</figcaption>
   </figure>
 
-  <h3>What the demo actually showed</h3>
+  <h2>What the demo actually showed</h2>
   <p>In the live part of the session, we walked through the full AI Data Platform workspace (<code>SMARTQ_AIDP</code>) — the master catalog, the workflows (<code>tfl_bronze_layer_job</code>, <code>tfl_silver_layer_job</code>, <code>tfl_arrivals_poller</code>, the stream producer), and the Spark cluster running those jobs.</p>
 
   <figure>
@@ -107,7 +57,7 @@ Paste the complete block below into Blogger's HTML editor.
 
   <p>From there, we asked the platform the natural-language question about the nearest Line 25 stations and got a live, data-backed answer within seconds — a good illustration of how the bronze-to-gold pipeline and the MCP layer work together.</p>
 
-  <h3>What's coming next in this series</h3>
+  <h2>What's coming next in this series</h2>
   <p>This post is deliberately high level — it's the framing for the whole story. In the upcoming posts, I'll go technical on each component, roughly in this order:</p>
   <ol>
     <li><strong>OCI Streaming and the stream producer</strong> — how the TfL API client is built, how records get published to a Kafka-compatible topic, and what to watch out for around throughput and retries.</li>

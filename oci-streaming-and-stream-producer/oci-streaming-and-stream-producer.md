@@ -1,3 +1,5 @@
+![OCI Streaming and Stream Producer — from TfL live bus arrivals through a Python stream producer on OCI Compute (filter, deduplicate, transform) into the OCI Streaming tfl-arrivals topic, feeding the AI Data Platform's Spark bronze layer next in the series](https://zigavaupot.github.io/blogger-ai-data-platform-series/oci-streaming-and-stream-producer/images/oci-streaming-to-aidp.png)
+
 # OCI Streaming and the Stream Producer (Part 2 of the AI Data Platform Series)
 
 *This is the first technical post in the series that opened with [Just Streams: Real-Time Data Pipelines on OCI](https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html). That post walked through the whole TfL-bus-arrivals demo Sandi Holub and I gave at Make IT 2026 and UKOUG 2025. This one goes one layer down: the piece that gets live data into the platform in the first place — a small Python producer and an OCI Streaming topic.*

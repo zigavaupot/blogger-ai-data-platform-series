@@ -1,63 +1,14 @@
-<!--
-Generated from: create-aidp-workbench/create-aidp-workbench.md
-Shared CSS source: BLOGGER/blogger-post.css
-Paste the complete block below into Blogger's HTML editor.
--->
-<style>
-/*
-  Official Blogger post CSS for zigavaupot.blogspot.com.
-
-  Scope all generated article HTML with: <article class="zv-blog-post">...</article>
-*/
-
-@import url("https://fonts.googleapis.com/css2?family=Lora:wght@400&family=Open+Sans:ital,wght@0,400;0,600;0,700;1,600&display=swap");
-
-.zv-blog-post { color: #000; font-family: "Open Sans", Arial, sans-serif; font-size: 16px; line-height: 1.72; }
-.zv-blog-post h2, .zv-blog-post h3, .zv-blog-post h4 { color: #000; font-family: Lora, Georgia, serif; font-weight: 400; line-height: 1.3; }
-.zv-blog-post h2 { font-size: 28px; margin: 0 0 24px; }
-.zv-blog-post h3 { font-size: 22px; margin: 34px 0 14px; }
-.zv-blog-post h4 { font-size: 18px; margin: 28px 0 12px; }
-.zv-blog-post p { margin: 0 0 18px; }
-.zv-blog-post a { color: #132a53; font-weight: 600; text-decoration: none; }
-.zv-blog-post a:hover, .zv-blog-post a:focus { text-decoration: underline; }
-.zv-blog-post strong { font-weight: 700; }
-.zv-blog-post em { font-style: italic; }
-.zv-blog-post ul, .zv-blog-post ol { margin: 0 0 22px 26px; padding: 0; }
-.zv-blog-post li { margin: 0 0 8px; }
-.zv-blog-post code { background: #f5f6f8; border: 1px solid #e1e4ea; border-radius: 3px; color: #1f2937; font-family: Consolas, Monaco, "Courier New", monospace; font-size: 0.92em; padding: 1px 5px; }
-.zv-blog-post pre { background: #f5f6f8; border: 1px solid #dfe3ea; border-radius: 4px; color: #1f2937; font-family: Consolas, Monaco, "Courier New", monospace; font-size: 13px; line-height: 1.55; margin: 0 0 22px; overflow-x: auto; padding: 14px 16px; white-space: pre; }
-.zv-blog-post pre code { background: transparent; border: 0; color: inherit; display: block; font-size: inherit; padding: 0; }
-.zv-blog-post img { border: 0; box-sizing: border-box; display: block; height: auto; margin: 26px auto 28px; max-width: 100%; }
-.zv-blog-post p:first-child img { margin-top: 0; }
-.zv-blog-post figure { margin: 28px 0; }
-.zv-blog-post figcaption { color: rgba(0, 0, 0, 0.62); font-size: 13px; line-height: 1.45; margin-top: -16px; text-align: center; }
-.zv-blog-post blockquote { border-left: 4px solid #132a53; color: rgba(0, 0, 0, 0.72); margin: 24px 0; padding: 4px 0 4px 18px; }
-.zv-blog-post hr { border: 0; border-top: 1px solid #e1e4ea; margin: 34px 0; }
-.zv-blog-post table { border-collapse: collapse; margin: 0 0 24px; width: 100%; }
-.zv-blog-post th, .zv-blog-post td { border: 1px solid #dfe3ea; padding: 8px 10px; text-align: left; vertical-align: top; }
-.zv-blog-post th { background: #f5f6f8; font-weight: 700; }
-.zv-blog-post .zv-series-grid { display: grid; gap: 28px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 34px 0 24px; }
-.zv-blog-post .zv-series-card img { aspect-ratio: 16 / 9; border-radius: 8px; margin: 0 0 14px; object-fit: cover; width: 100%; }
-.zv-blog-post .zv-series-card p { font-family: Lora, Georgia, serif; font-size: 22px; line-height: 1.25; margin: 0; }
-
-@media screen and (max-width: 600px) {
-  .zv-blog-post { font-size: 15px; line-height: 1.65; }
-  .zv-blog-post h2 { font-size: 24px; }
-  .zv-blog-post h3 { font-size: 20px; }
-  .zv-blog-post ul, .zv-blog-post ol { margin-left: 22px; }
-  .zv-blog-post .zv-series-grid { grid-template-columns: 1fr; }
-  .zv-blog-post .zv-series-card p { font-size: 20px; }
-}
-</style>
-
 <article class="zv-blog-post">
+
   <img alt="Setting Oracle AI Data Platform in OCI" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/create-aidp-workbench/images/setting-aidp.png">
 
-  <h2>Setting Up the AI Data Platform Environment</h2>
+  <div class="post-intro">
+    <p>This post backs up a step from the rest of the <a href="https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html">AI Data Platform series</a>. Before any bronze/silver/gold Spark job can run, or a stream producer can hand data off to something downstream, the AI Data Platform (AIDP) environment itself has to exist: a Workbench, a workspace, a catalog, compute, and a place to keep secrets. This post walks through building all of that from nothing on a brand-new OCI tenancy, using the same TfL bus-arrivals demo's naming (catalog <code>tfl</code>, schemas <code>bronze</code>/<code>silver</code>/<code>gold</code>) as the throughline.</p>
+  </div>
 
-  <p><em>This post backs up a step from the rest of the <a href="https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html">AI Data Platform series</a>. Before any bronze/silver/gold Spark job can run, or a stream producer can hand data off to something downstream, the AI Data Platform (AIDP) environment itself has to exist: a Workbench, a workspace, a catalog, compute, and a place to keep secrets. This post walks through building all of that from nothing on a brand-new OCI tenancy, using the same TfL bus-arrivals demo's naming (catalog <code>tfl</code>, schemas <code>bronze</code>/<code>silver</code>/<code>gold</code>) as the throughline.</em></p>
+  <!--more-->
 
-  <h3>The shape of an AI Data Platform environment</h3>
+  <h2>The shape of an AI Data Platform environment</h2>
 
   <figure>
     <img alt="Inside Oracle AIDP" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/create-aidp-workbench/images/inside-aidp.png">
@@ -67,7 +18,7 @@ Paste the complete block below into Blogger's HTML editor.
   <p>AIDP's console groups objects into a hierarchy that's worth having straight before clicking anything: a <strong>Workbench</strong> instance (the top-level resource, e.g. <code>aidp001</code>) sits on an <strong>Autonomous AI Lakehouse</strong> — which isn't a separate product, just a regular Autonomous Database provisioned with workload type Lakehouse. Inside the Workbench, one or more <strong>Workspaces</strong> (<code>workspace001</code> here) each hold their own <strong>Compute</strong> clusters (managed Spark), <strong>Notebooks</strong>, and <strong>Folders</strong>. Separately, at the Workbench level, sits the <strong>Master Catalog</strong> — a Databricks-Unity-Catalog-style <code>catalog.schema.table</code> namespace shared across workspaces, with Volumes for anything that isn't a table (streaming checkpoints, mainly).</p>
   <p>None of this is needed by the stream producer itself — that only talks to OCI Streaming. It's everything <em>downstream</em> of the producer — bronze, silver, gold, and eventually Oracle Analytics — that lives inside this environment.</p>
 
-  <h3>Creating the Workbench</h3>
+  <h2>Creating the Workbench</h2>
   <p><strong>Analytics &amp; AI &gt; AI Data Platform Workbenches &gt; Create AI Data Platform Workbench</strong> is a single page. It asks for a Workbench name and a default workspace name in one step (no separate "create workspace" screen), a Lakehouse configuration — <strong>Choose existing</strong>, <strong>Create new</strong>, or <strong>None</strong> — and a storage-encryption choice. Picking <strong>Create new</strong> for the Lakehouse only asks for two fields: a fixed <code>ADMIN</code> username and a password. There's no ECPU or storage sizing exposed at all; AIDP owns those defaults and provisions the underlying Autonomous AI Lakehouse itself.</p>
   <p>The one part worth calling out in detail is the policy step. The wizard's "Add policies" section doesn't ask you to write IAM statements by hand — it shows you the exact ones it's about to create, scoped to a <strong>Standard</strong> access level by default. On a clean tenancy (<code>smartqcloud</code>, compartment <code>shared</code>), the auto-generated statements all follow the same pattern:</p>
   <pre><code>allow any-user TO {AUTHENTICATION_INSPECT, DOMAIN_INSPECT, DOMAIN_READ,
@@ -91,7 +42,7 @@ allow any-user to manage log-groups in compartment id &lt;shared-compartment-OCI
     <figcaption>The Workbench home page once aidp001 is Active.</figcaption>
   </figure>
 
-  <h3>Building the Master Catalog</h3>
+  <h2>Building the Master Catalog</h2>
   <p>With the Workbench up, <strong>Master Catalog</strong> needs to be created first. <strong>Master Catalog &gt; Create Catalog</strong> asks for a catalog name, a type (pick Standard catalog), and an optional compartment override; leave it matching the Workbench's own compartment unless you specifically want the catalog's storage elsewhere:</p>
 
   <figure>
@@ -108,7 +59,7 @@ allow any-user to manage log-groups in compartment id &lt;shared-compartment-OCI
 
   <p>Worth a second look here: the badge next to "Master catalog" reads <strong>Default Cluster (Accepted)</strong>. The Master Catalog has its own dedicated, system-managed Spark compute backing catalog operations. Separated from anything you provision yourself, it starts spinning up the moment you create your first catalog. That becomes relevant a couple of steps later.</p>
 
-  <h3>Spinning up a Spark cluster</h3>
+  <h2>Spinning up a Spark cluster</h2>
   <p>Workspace &gt; <strong>Compute &gt; Create Cluster</strong> offers two paths. <strong>Quickstart</strong> hands you a fixed, fairly generous preset — AMD driver and worker, 2 OCPUs / 32GB each, autoscaling 1-10 workers:</p>
 
   <figure>
@@ -141,7 +92,7 @@ allow any-user to manage log-groups in compartment id &lt;shared-compartment-OCI
 
   <p>One thing not to be alarmed by along the way: the async-operations panel briefly showed the Default Master Catalog cluster's <code>CREATE_CLUSTER</code> operation as <strong>Canceled</strong> partway through, before it went on to finish normally. Nothing needed doing about it. It self-resolved into Creating, then Active, on its own.</p>
 
-  <h3>Creating the schemas and the checkpoint volume</h3>
+  <h2>Creating the schemas and the checkpoint volume</h2>
   <p>Schemas get created from SQL, run inside a notebook attached to a live cluster. There's no separate console form for it. <strong>Create &gt; Notebook</strong>, name it (<code>tfl_setup.ipynb</code>), and it opens unattached, defaulting to Python:</p>
 
   <figure>
@@ -183,7 +134,7 @@ CREATE VOLUME IF NOT EXISTS tfl.gold.tfl_volume;</code></pre>
 
   <p><code>gold.tfl_volume</code> shows up the same way, empty and Active, ready for the silver layer's streaming checkpoint later in the series.</p>
 
-  <h3>Vault and secrets for the Kafka credentials</h3>
+  <h2>Vault and secrets for the Kafka credentials</h2>
   <p>The old version of this demo read its OCI Streaming credentials out of OCI Vault via an <code>aidputils.secrets.get(...)</code> helper, and the same approach carries over here — with one console change worth flagging up front: secrets have moved out of the classic Vault UI into a dedicated <strong>Secrets Management</strong> console under Identity &amp; Security.</p>
   <p>Rather than reuse a vault that already backs other workloads in the tenancy, this gets its own: <strong>Identity &amp; Security &gt; Vault &gt; Create Vault</strong>, named <code>tfl-aidp-vault</code>, in the <code>shared</code> compartment:</p>
 
@@ -232,7 +183,7 @@ CREATE VOLUME IF NOT EXISTS tfl.gold.tfl_volume;</code></pre>
     <figcaption>Both secrets Active, holding placeholder values until the stream pool exists.</figcaption>
   </figure>
 
-  <h3>What's next</h3>
+  <h2>What's next</h2>
   <p>With the Workbench, catalog, compute, and a place to keep secrets all in place, the environment side of this series is done. The remaining piece — provisioning the actual OCI Streaming pool and topic, generating a real OCI Auth Token, and updating these two secrets with real values — picks back up in the stream-producer post, where the rebuilt <code>tfl_stream_producer.py</code> actually starts publishing.</p>
 
   <p><em>Related: <a href="https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html">Just Streams: Real-Time Data Pipelines on OCI</a> (series intro)</em></p>
