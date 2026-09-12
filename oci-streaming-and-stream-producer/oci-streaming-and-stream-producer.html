@@ -55,12 +55,38 @@ Paste the complete block below into Blogger's HTML editor.
 
   <p><em>This is the first technical post in the series that opened with <a href="https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html">Just Streams: Real-Time Data Pipelines on OCI</a>. That post walked through the whole TfL-bus-arrivals demo Sandi Holub and I gave at Make IT 2026 and UKOUG 2025. This one goes one layer down: the piece that gets live data into the platform in the first place — a small Python producer and an OCI Streaming topic.</em></p>
 
+  <h3>Setting up OCI Streaming</h3>
+  <p>All of this lives in the same <code>shared</code> compartment I've been using since the AIDP setup — no new compartment needed for a demo.</p>
+  <p><strong>Stream pool.</strong> Analytics &amp; AI &gt; Messaging &gt; Streaming &gt; Stream Pools &gt; Create Stream Pool. I named mine <code>tfl-stream-pool</code>, picked a public endpoint (this demo doesn't need a private one), and left encryption on Oracle-managed keys.</p>
+
+  <figure>
+    <img alt="Create Stream Pool dialog, named tfl-stream-pool in the shared compartment" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/oci-streaming-and-stream-producer/images/stream-pool-create.png">
+    <figcaption>Create Stream Pool dialog, named tfl-stream-pool in the shared compartment</figcaption>
+  </figure>
+
+  <p>Once it's Active, the pool's own <strong>Kafka connection settings</strong> tab gives you the bootstrap servers (<code>cell-1.streaming.&lt;region&gt;.oci.oraclecloud.com:9092</code>) and — usefully — a pre-built SASL connection string for whichever OCI user is currently logged in, so you don't have to hand-assemble the username yourself.</p>
+
+  <figure>
+    <img alt="tfl-stream-pool, Active, Kafka connection settings tab showing bootstrap servers" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/oci-streaming-and-stream-producer/images/stream-pool-active.png">
+    <figcaption>tfl-stream-pool, Active, Kafka connection settings tab showing bootstrap servers</figcaption>
+  </figure>
+
+  <p><strong>Topic.</strong> Inside the pool, Create Stream, named <code>tfl-arrivals</code>. One partition and 24-hour retention are plenty for a demo that's consumed continuously rather than replayed.</p>
+
+  <figure>
+    <img alt="tfl-arrivals stream, Active, inside tfl-stream-pool" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/oci-streaming-and-stream-producer/images/topic-tfl-arrivals.png">
+    <figcaption>tfl-arrivals stream, Active, inside tfl-stream-pool</figcaption>
+  </figure>
+
+  <p><strong>Credentials, the simple way.</strong> I considered creating a dedicated <code>svc-tfl-producer</code> OCI user with a narrowly-scoped policy, but for a demo — where I already have admin rights on this tenancy — that's setup effort without adding real access control. I used my own user instead: the Kafka connection settings tab above already gives the username, and Identity &amp; Security &gt; Domains &gt; (domain) &gt; Users &gt; (my user) &gt; Auth Tokens &gt; Generate Token gives the password (shown exactly once — copy it immediately). If this producer ever needed to run unattended in a real production pipeline, that's the point where a dedicated service user would earn its keep.</p>
+  <p><strong>TfL credentials.</strong> Register at api-portal.tfl.gov.uk, confirm your email, then subscribe to the free "500 Requests per min" product under Products. Your Primary key (visible on the Profile page) is <code>TFL_APP_KEY</code>. One thing that tripped me up briefly: older TfL examples also expect an <code>app_id</code> — that's deprecated now, the portal only issues a subscription key, and the producer treats <code>TFL_APP_ID</code> as optional.</p>
+
   <h3>Why a plain Python producer, not Spark</h3>
   <p>Everything downstream of this post — bronze, silver, gold — runs as a Spark Structured Streaming job on the AI Data Platform. The producer doesn't. It's a standalone Python process that polls the TfL Unified API and writes to OCI Streaming's Kafka-compatible endpoint using <code>confluent-kafka</code>.</p>
   <p>That's a deliberate split. TfL's public API has no push/webhook mode — you poll it. Polling, deduping, and handling an unreliable third-party HTTP endpoint is exactly the kind of lightweight, stateful loop that doesn't need a cluster: a single always-on process with a small in-memory cache is enough, and it's much easier to reason about and restart than a Spark job whose only job is essentially "call <code>requests.get</code> in a loop." Spark's structured streaming engine is what the <em>bronze layer</em> uses to consume this topic — that's a different post.</p>
 
   <h3>What the TfL API actually returns</h3>
-  <p><code>GET https://api.tfl.gov.uk/Mode/bus/Arrivals</code> (with <code>app_id</code>/<code>app_key</code> query params) returns the <strong>entire live arrivals board for every bus in London</strong> as a single JSON array — tens of thousands of predictions, one per vehicle/stop/line combination, every time you call it. There's no delta endpoint and no filtering by area in this call; you get everything, on every poll.</p>
+  <p><code>GET https://api.tfl.gov.uk/Mode/bus/Arrivals</code> (with an <code>app_key</code> query param) returns the <strong>entire live arrivals board for every bus in London</strong> as a single JSON array — tens of thousands of predictions, one per vehicle/stop/line combination, every time you call it. There's no delta endpoint and no filtering by area in this call; you get everything, on every poll.</p>
   <p>Each record looks roughly like:</p>
   <pre><code>{
   "id": "...",
@@ -132,28 +158,101 @@ Paste the complete block below into Blogger's HTML editor.
   </ol>
   <p>The bigger throughput lesson: because TfL returns the <em>entire</em> London bus board on every call, the dedupe cache isn't an optimization, it's what makes the volume tractable at all. Skip it, and every downstream component — the topic, the bronze layer, the silver <code>MERGE</code> — has to absorb 30-50x more traffic than the data actually warrants, for zero additional information.</p>
 
-  <h3>Running it</h3>
+  <h3>Running it — a one-time laptop check</h3>
   <pre><code>cp .env.example .env
-# fill in TFL_APP_ID/KEY and the OCI Streaming connection details
-set -a; source .env; set +a
+# fill in TFL_APP_KEY and the OCI Streaming connection details from the
+# Kafka connection settings tab above
 python3 tfl_stream_producer.py</code></pre>
+  <p>Don't <code>source .env</code> in bash to load these into your shell — the script loads <code>.env</code> itself via <code>python-dotenv</code>. I found this out the hard way: a shell <code>source</code> parses the file as shell script, and an OCI Auth Token can easily contain characters like <code>(</code>, <code>)</code>, <code>[</code>, <code>]</code>, <code>:</code> that trigger a bash syntax error — one that echoes part of the secret in plain text into your terminal history. If that ever happens to you, rotate the value immediately; don't just fix the syntax and move on.</p>
 
   <figure>
-    <img alt="OCI Streaming pool, active, with Kafka bootstrap servers visible" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/oci-streaming-and-stream-producer/images/stream-pool-active.png">
-    <figcaption>OCI Streaming pool, active, with Kafka bootstrap servers visible</figcaption>
+    <img alt="Terminal showing the producer running locally with POLL lines and dedupe stats" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/oci-streaming-and-stream-producer/images/producer-running-terminal.png">
+    <figcaption>Terminal showing the producer running locally with POLL lines and dedupe stats</figcaption>
   </figure>
 
-  <p>Within the first poll or two you should see a steady stream of <code>[POLL]</code> lines, and the stream pool's metrics should start ticking up in the console:</p>
-
-  <figure>
-    <img alt="Producer running, publishing new records to the tfl-arrivals topic" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/oci-streaming-and-stream-producer/images/producer-running-terminal.png">
-    <figcaption>Producer running, publishing new records to the tfl-arrivals topic</figcaption>
-  </figure>
+  <p>Within the first poll or two you should see a steady stream of <code>[POLL]</code> lines with <code>published &gt; 0</code>. In the console, the <code>tfl-arrivals</code> stream's <strong>Recent messages</strong> tab is the fastest way to confirm real data actually landed — real offsets, base64-encoded keys, values shaped like TfL's own payload (the separate <strong>Monitoring</strong> tab's metrics can lag a few minutes behind, so don't panic if it briefly shows "No data for this time range" right after a short test run).</p>
 
   <figure>
-    <img alt="OCI Streaming pool metrics showing incoming messages" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/oci-streaming-and-stream-producer/images/stream-pool-metrics.png">
-    <figcaption>OCI Streaming pool metrics showing incoming messages</figcaption>
+    <img alt="tfl-arrivals Recent messages tab, showing real offsets and message keys" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/oci-streaming-and-stream-producer/images/topic-monitoring.png">
+    <figcaption>tfl-arrivals Recent messages tab, showing real offsets and message keys</figcaption>
   </figure>
+
+  <p>Running it like this — from a laptop, in the foreground — is only good for one thing: confirming the wiring works end to end. It's not a home for a process meant to run continuously across demos.</p>
+
+  <h3>From a laptop to an OCI Compute VM</h3>
+  <p>I considered three ways to host this properly, and ruled out two of them fast:</p>
+  <ul>
+    <li><strong>OCI Functions</strong> — built for short-lived, event-triggered invocations with an execution time cap. This producer polls forever and keeps an in-memory dedupe cache across polls; a cold-started function loses that cache on every restart, which defeats the entire point of deduping.</li>
+    <li><strong>Container Instances</strong> — technically fine, but it's a Dockerfile and an image registry for one Python process. No real operational benefit over a plain VM at this scale.</li>
+    <li><strong>AIDP's own "Compute"</strong> — worth checking rather than assuming: AIDP's Compute is exclusively managed Spark clusters (the same All-Purpose clusters the bronze/silver/gold layers will use). There's no general-purpose, SSH-accessible VM available through AIDP itself, so the producer has to live outside AIDP, talking to it only indirectly through the Streaming topic.</li>
+  </ul>
+  <p>That left a small <strong>OCI Compute VM</strong>.</p>
+
+  <p><strong>Creating the instance.</strong> Compute &gt; Instances &gt; Create Instance, in <code>shared</code>, named <code>tfl-producer-vm</code>. Oracle Linux 9, and the console's default shape — <code>VM.Standard.A1.Flex</code> (Ampere, Always Free-eligible), 1 OCPU / 6GB — is more than enough for a single Python process with no Spark involved. I reused the existing <code>vcn-analytics-shared</code> VCN and <code>subnet-lb-public</code> subnet rather than standing up new networking for a one-VM workload.</p>
+
+  <figure>
+    <img alt="Create compute instance — Oracle Linux 9, VM.Standard.A1.Flex, Always Free-eligible" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/oci-streaming-and-stream-producer/images/compute-instance-create.png">
+    <figcaption>Create compute instance — Oracle Linux 9, VM.Standard.A1.Flex, Always Free-eligible</figcaption>
+  </figure>
+
+  <p><strong>The networking wrinkle.</strong> That subnet's security list, <code>sl-lb-public</code>, intentionally only allows inbound port 443 — it's the sole public entry point for a separate Essbase load balancer, and widening it for SSH would have been a real, easy-to-miss security regression for an unrelated workload.</p>
+
+  <figure>
+    <img alt="sl-lb-public security list, showing the existing port-443-only ingress rule" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/oci-streaming-and-stream-producer/images/security-list-existing.png">
+    <figcaption>sl-lb-public security list, showing the existing port-443-only ingress rule</figcaption>
+  </figure>
+
+  <p>OCI evaluates Security Lists and Network Security Groups as a union — if either one allows a packet, it's allowed — so instead of touching the shared list, I created a dedicated NSG scoped to just this VM: <code>nsg-tfl-producer-ssh</code>, with a single ingress rule for TCP/22 from my own IP in <code>/32</code> form (never <code>0.0.0.0/0</code>), then attached it directly to the VM's VNIC.</p>
+
+  <figure>
+    <img alt="Create Network Security Group — nsg-tfl-producer-ssh, TCP/22 ingress from a single IP" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/oci-streaming-and-stream-producer/images/nsg-create.png">
+    <figcaption>Create Network Security Group — nsg-tfl-producer-ssh, TCP/22 ingress from a single IP</figcaption>
+  </figure>
+
+  <p><strong>Getting the code onto the VM:</strong></p>
+  <pre><code>scp -i ~/.ssh/tfl-producer-vm_key \
+  tfl_stream_producer.py requirements.txt .env \
+  opc@&lt;public-ip&gt;:~/tfl-producer/
+
+ssh -i ~/.ssh/tfl-producer-vm_key opc@&lt;public-ip&gt;
+sudo dnf install -y python3-pip git
+cd ~/tfl-producer
+pip3 install --user -r requirements.txt
+python3 tfl_stream_producer.py   # confirm a few [POLL] lines, then Ctrl+C</code></pre>
+
+  <p><strong>Wrapping it as a systemd service</strong>, so it survives reboots and restarts itself on failure instead of dying quietly the moment the SSH session closes:</p>
+  <pre><code>[Unit]
+Description=TfL Bus Arrivals Stream Producer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=opc
+Environment=HOME=/home/opc
+WorkingDirectory=/home/opc/tfl-producer
+ExecStart=/usr/bin/python3 /home/opc/tfl-producer/tfl_stream_producer.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target</code></pre>
+  <p>The <code>Environment=HOME=/home/opc</code> line is the one easy to miss: systemd doesn't set <code>HOME</code> by default, and without it Python can't find the packages <code>pip3 install --user</code> put under <code>/home/opc/.local/</code>.</p>
+  <pre><code>sudo systemctl daemon-reload
+sudo systemctl enable --now tfl-producer.service
+sudo systemctl status tfl-producer.service     # enabled, active (running)
+sudo journalctl -u tfl-producer.service -f     # live [POLL] lines</code></pre>
+  <pre><code>● tfl-producer.service - TfL Bus Arrivals Stream Producer
+     Loaded: loaded (/etc/systemd/system/tfl-producer.service; enabled; preset: disabled)
+     Active: active (running)
+Sep 12 13:15:51 tfl-producer-vm systemd[1]: Started TfL Bus Arrivals Stream Producer.
+Sep 12 13:15:52 tfl-producer-vm python3[46418]: [POLL] iter=1 fetched=15748 published=15748 deduped=0 elapsed=0.99s
+Sep 12 13:15:54 tfl-producer-vm python3[46418]: [POLL] iter=2 fetched=15893 published=15893 deduped=0 elapsed=0.89s
+Sep 12 13:15:56 tfl-producer-vm python3[46418]: [POLL] iter=4 fetched=15672 published=4 deduped=15668 elapsed=0.75s</code></pre>
+  <p>That last line is the dedupe cache doing exactly its job — one poll later, almost the entire board was unchanged.</p>
+  <p>From here the producer runs independently of any laptop — it starts with the VM, restarts itself if it crashes, and the only ongoing cost discipline is the same one I already use for the AIDP compute clusters: start the instance before a demo, stop it after.</p>
 
   <h3>What's next</h3>
   <p>With records landing in <code>tfl-arrivals</code>, the next post covers the <strong>bronze layer</strong>: a Spark Structured Streaming job that reads this same topic via the Kafka API, parses the JSON payload, adds event-time partitions, and appends everything into a Delta table — the first stop for this data once it's inside the AI Data Platform itself.</p>
