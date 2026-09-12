@@ -8,6 +8,8 @@
 
   <!--more-->
 
+  <p>In this post I'll cover both halves of getting live data flowing: the console side (creating the stream pool and topic, and deciding how to handle credentials) and the code side (why this is a plain Python process rather than a Spark job, what the TfL API's payload actually looks like, how the in-memory dedupe logic works, and how records get published to OCI Streaming with retries). I'll also cover where the producer actually runs day to day — not on my laptop, but on a small, always-on OCI Compute VM — and how I wired it up as a systemd service so it survives reboots and restarts on its own.</p>
+
   <h2>Setting up OCI Streaming</h2>
   <p>All of this lives in the same <code>shared</code> compartment I've been using since the AIDP setup — no new compartment needed for a demo.</p>
   <p><strong>Stream pool.</strong> Analytics &amp; AI &gt; Messaging &gt; Streaming &gt; Stream Pools &gt; Create Stream Pool. I named mine <code>tfl-stream-pool</code>, picked a public endpoint (this demo doesn't need a private one), and left encryption on Oracle-managed keys.</p>
