@@ -9,12 +9,18 @@ In this post I'll walk through:
 - **Reusing what already exists**: this stage needed zero new OCI console resources.
 - **Shaping the bronze table**: typed columns plus a full-fidelity `raw_payload` safety net.
 - **The Credential Store, not Vault**: a separate, AIDP-native place to keep secrets that a notebook can read directly, and why a preview-feature IAM gap led to one particular choice.
-- **Running the stream, and stopping it on purpose**: why the write cell blocks the notebook, the two-step process to stop it, and what to do if a cancelled cell leaves the cluster unresponsive.
-- **Verifying it actually worked**: 36,000 rows in a 60-second test run, with the timestamp handling that made that possible.
+- **Running the stream, and verifying it actually worked.**
 
-## Recap: where this data is coming from
+## Recap: what we have so far
 
-Quick reminder of the state of things at the end of the last post: a small Python process on an always-on OCI Compute VM polls the TfL Unified API, deduplicates the near-identical predictions TfL keeps re-serving, and publishes the genuinely new ones onto `tfl-arrivals`, a single-partition OCI Streaming topic inside `tfl-stream-pool`.
+Two things are already in place from earlier in the series. First, the AI Data Platform Workbench itself: the `tfl` catalog with its `bronze`/`silver`/`gold`/`default` schemas, and the `tfl_cluster` compute cluster, all set up in [Setting Up the AI Data Platform Environment](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-setting-up-ai.html).
+
+<figure>
+  <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/bronze-layer-spark-structured-streaming/images/bronze-recap-aidp-workbench.png" alt="AIDP Workbench Master Catalog, showing the tfl catalog with its bronze, silver, gold, and default schemas">
+  <figcaption>The tfl catalog and its schemas in the Master Catalog, set up in the previous stage.</figcaption>
+</figure>
+
+Second, a live stream of data: a small Python process on an always-on OCI Compute VM polls the TfL Unified API, deduplicates the near-identical predictions TfL keeps re-serving, and publishes the genuinely new ones onto `tfl-arrivals`, a single-partition OCI Streaming topic inside `tfl-stream-pool`.
 
 <figure>
   <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/bronze-layer-spark-structured-streaming/images/bronze-source-stream-pool.png" alt="tfl-stream-pool, Active, with the tfl-arrivals stream showing live read/write throughput">
@@ -26,7 +32,7 @@ Quick reminder of the state of things at the end of the last post: a small Pytho
   <figcaption>tfl-arrivals Recent messages tab, showing real offsets and base64-encoded message keys.</figcaption>
 </figure>
 
-Everything in this post is downstream of that topic. Nothing here talks to the TfL API directly.
+This post connects those two pieces: reading from the topic, and landing the result inside the workbench's `bronze` schema.
 
 ## No new OCI resources needed
 
@@ -34,27 +40,68 @@ This stage reuses the `tfl_cluster` compute and the `tfl` catalog's `bronze` sch
 
 Even though the data could have been stored in a dedicated Object Storage bucket per medallion layer, it doesn't need to be: the `bronze` schema already has its own storage, visible in the Master Catalog UI as the `Tables`/`Volumes`/`Knowledge Bases`/`Models` categories underneath it. So the bronze table is created without an explicit `LOCATION` clause: a catalog-managed table sitting on storage the schema already provides, one fewer resource to keep track of.
 
+<figure>
+  <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/bronze-layer-spark-structured-streaming/images/bronze-schema-types.png" alt="bronze schema Types page listing Tables, Volumes, Knowledge Bases, and Models">
+  <figcaption>The bronze schema's own storage categories: Tables, Volumes, Knowledge Bases, and Models.</figcaption>
+</figure>
+
 ## Shaping the bronze table
 
 A few decisions made before writing any code:
 
 - **Typed columns for every field in TfL's real payload**, including `timeToLive` and the nested `timing` object. `raw_payload`, the untouched original JSON string, is kept alongside the typed columns as a full-fidelity safety net.
-- **One bronze table.** The topic only ever carries arrival-prediction events today, so there's no need to split by entity type.
-- **A dedicated checkpoint volume**, `tfl.bronze.tfl_volume`, kept separate from the gold layer's own checkpoint volume, so each layer's pipeline state stays colocated with its own schema instead of borrowing another layer's. That costs one extra `CREATE VOLUME` statement (a catalog-native object, not a new OCI resource); bronze and silver don't follow the same checkpoint convention yet, worth revisiting for silver later.
+- **One bronze table.** In a medallion setup it's common to have a separate bronze table per kind of record a source produces. Here there's only one kind: every message on `tfl-arrivals` is an arrival prediction for one bus at one stop, nothing else. So a single table, `arrivals_bronze`, is enough; there's no other entity type to split it from.
+- **A dedicated checkpoint volume**, `tfl.bronze.tfl_volume`, holding the write-stream's checkpoint: Spark's own record of which Kafka offsets have already been processed, so a restart doesn't redo work or duplicate rows. It lives inside the `bronze` schema itself rather than somewhere shared, keeping this pipeline's state self-contained.
 - **Manual notebook run for now**, the same operating model the stream producer started with on a laptop before it moved to a VM. Automating this into a scheduled Job is a later-stage concern, not a day-one one.
 
-`timing` is stored as a raw `STRING`, parsed straight out of the JSON payload rather than declared as a nested field in the schema.
+### What's in a TfL arrival record
+
+Before looking at the table DDL, here's what each field coming from TfL actually means:
+
+| Field | What it is |
+|---|---|
+| `id` | Unique identifier for this specific prediction |
+| `operationType` | Internal TfL flag for the kind of update this is (arrivals data always uses the same value) |
+| `vehicleId` | Registration of the physical vehicle serving this arrival |
+| `naptanId` | NaPTAN identifier of the stop this prediction is for |
+| `stationName` | Human-readable name of that stop |
+| `lineId` | Short code identifying the bus line, e.g. `25` |
+| `lineName` | Display name of the line (usually the same as `lineId` for buses) |
+| `platformName` | Stop/bay label at the station, where applicable |
+| `direction` | Direction of travel, `inbound` or `outbound` |
+| `bearing` | Compass bearing of the stop, in degrees |
+| `tripId` | Identifier of the specific scheduled trip this vehicle is running |
+| `baseVersion` | Version identifier of TfL's underlying timetable data |
+| `destinationNaptanId` | NaPTAN identifier of the trip's terminating stop |
+| `destinationName` | Human-readable name of that destination |
+| `timestamp` | When TfL generated this prediction |
+| `timeToStation` | Seconds until the vehicle is expected to reach the stop |
+| `currentLocation` | Free-text description of where the vehicle currently is |
+| `towards` | Free-text summary of the direction, as shown to riders at the stop |
+| `expectedArrival` | Predicted arrival time at the stop |
+| `timeToLive` | Point after which this prediction should be considered stale |
+| `modeName` | Transport mode, always `bus` on this topic |
+| `timing` | A nested object with extra scheduling detail from TfL |
+
+Everything above comes straight from TfL. `timing` is the one exception kept as a raw `STRING` in the bronze table, parsed straight out of the JSON payload rather than declared as a nested field in the schema. The remaining bronze columns, `ingest_ts`, `ingest_source`, `raw_payload`, `event_date`, and `event_hour`, are added by the pipeline itself, not part of TfL's payload.
 
 ## Opening the notebook and running the one-time setup
 
-**Create > Notebook** in workspace `workspace001`, named `bronze_streaming_job`, attached to `tfl_cluster`. The notebook mixes `%sql` cells and Python cells, so the default language stays Python: the `%sql` magic handles the SQL cells inline.
+**Create > Notebook** in workspace `workspace001`, named `bronze_streaming_job`. The notebook mixes `%sql` cells and Python cells, so the default language stays Python: the `%sql` magic handles the SQL cells inline.
 
 <figure>
   <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/bronze-layer-spark-structured-streaming/images/bronze-create-notebook.png" alt="Workbench Create menu, showing Notebook as an option alongside Job, Python, SQL, and Folder">
-  <figcaption>Workbench Create menu.</figcaption>
+  <figcaption>The Workbench's Create menu, with Notebook selected alongside Job, Python, SQL, and Folder.</figcaption>
 </figure>
 
-First cell, setting the catalog context:
+Once it exists, attach it to `tfl_cluster` from the notebook's own **Cluster** dropdown: **Attach existing cluster**.
+
+<figure>
+  <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/bronze-layer-spark-structured-streaming/images/bronze-attach-cluster.png" alt="Notebook Cluster dropdown, Attach existing cluster, showing tfl_cluster: 2 nodes, 2 OCPU, amd.generic, SPARK">
+  <figcaption>Attaching the notebook to tfl_cluster, a 2-node Spark cluster.</figcaption>
+</figure>
+
+First cell, setting the catalog context; this points every `%sql` statement that follows at the `tfl` catalog's `bronze` schema, so table and volume names don't need to be fully qualified from here on:
 
 ```sql
 %sql
@@ -121,14 +168,14 @@ TBLPROPERTIES (
 
 <figure>
   <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/bronze-layer-spark-structured-streaming/images/bronze-create-table-sql.png" alt="CREATE TABLE IF NOT EXISTS tfl.bronze.arrivals_bronze DDL cell, executed successfully">
-  <figcaption>Bronze table created.</figcaption>
+  <figcaption>Bronze table created, matching the field list above plus the pipeline's own metadata columns, partitioned by event_date and event_hour.</figcaption>
 </figure>
 
 Worth verifying directly in the Master Catalog tree, not just the cell output:
 
 <figure>
   <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/bronze-layer-spark-structured-streaming/images/bronze-volume-created.png" alt="Master Catalog tree showing tfl.bronze.tfl_volume under Volumes">
-  <figcaption>tfl.bronze.tfl_volume under Volumes.</figcaption>
+  <figcaption>tfl.bronze.tfl_volume now visible under Volumes in the Master Catalog.</figcaption>
 </figure>
 
 **Run both statements, in order.** Pasting the `CREATE TABLE` alone without first running `CREATE VOLUME` produces a `VolumePathDoesNotExistException` once you get to the write-stream step later on, an error that surfaces well after the fact and isn't obviously connected back to this step.
@@ -139,7 +186,7 @@ Worth verifying directly in the Master Catalog tree, not just the cell output:
 
 <figure>
   <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/bronze-layer-spark-structured-streaming/images/bronze-volume-table-created.png" alt="Master Catalog tree showing tfl.bronze.arrivals_bronze under Tables">
-  <figcaption>tfl.bronze.arrivals_bronze under Tables.</figcaption>
+  <figcaption>tfl.bronze.arrivals_bronze, created in the previous step, now visible under Tables in the Master Catalog.</figcaption>
 </figure>
 
 Before running the credentials cell, the credential it expects has to exist:
@@ -150,7 +197,7 @@ Before running the credentials cell, the credential it expects has to exist:
 
 <figure>
   <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/bronze-layer-spark-structured-streaming/images/bronze-credential-store-list.png" alt="Credential Store list showing tfl_kafka after creation">
-  <figcaption>tfl_kafka listed in the Credential Store.</figcaption>
+  <figcaption>tfl_kafka now listed in the Credential Store, ready for the credentials cell below to read from it.</figcaption>
 </figure>
 
 With that in place, the credentials cell:
@@ -270,7 +317,7 @@ query.awaitTermination()
 
 <figure>
   <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/bronze-layer-spark-structured-streaming/images/bronze-streaming-running.png" alt="The streaming write cell, running indefinitely against the bronze Delta table with a 2-second trigger">
-  <figcaption>The write-stream cell, running indefinitely.</figcaption>
+  <figcaption>The write-stream cell, running indefinitely: the notebook stays busy here until the cell is interrupted and the query is explicitly stopped.</figcaption>
 </figure>
 
 Run it whenever data should be flowing. It runs indefinitely and on demand, matching a manual-run model, no scheduled Job. It also **blocks the notebook**: the cell keeps running until stopped, and no other cell in that same notebook can execute while it's active. Checking on the table's contents while the stream is running needs a second notebook attached to the same cluster: its kernel session is independent, so it can safely run read-only `%sql` queries against `tfl.bronze.arrivals_bronze` concurrently. The commented-out lines above show a bounded test run instead, useful the first time through, before switching over to the indefinite version once the wiring is confirmed.
@@ -304,7 +351,7 @@ FROM tfl.bronze.arrivals_bronze;
 
 <figure>
   <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/bronze-layer-spark-structured-streaming/images/bronze-verify-query.png" alt="Verification query result: row_count 36000, last_ingest 2026-09-13 08:49:39.517Z">
-  <figcaption>36,000 rows landed during the test run.</figcaption>
+  <figcaption>36,000 rows landed during the test run, with a recent last_ingest timestamp confirming the stream was still writing.</figcaption>
 </figure>
 
 ```sql
@@ -317,7 +364,7 @@ LIMIT 20;
 
 <figure>
   <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/bronze-layer-spark-structured-streaming/images/bronze-verify-sample.png" alt="Sample of the 20 most recently ingested rows, with real station names and timestamps">
-  <figcaption>Sample of the 20 most recently ingested rows.</figcaption>
+  <figcaption>Sample of the 20 most recently ingested rows, with real station names, line IDs, and properly parsed timestamps.</figcaption>
 </figure>
 
 A 60-second bounded test run landed 36,000 rows with no null timestamps across `timestamp`, `expectedArrival`, and `timeToLive`: despite `timestamp`'s extra fractional-second digit in the raw payload, the plain `.cast("timestamp")` in the parse cell handles it fine, no format string needed.
