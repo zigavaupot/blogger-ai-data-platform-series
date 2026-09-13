@@ -13,7 +13,7 @@
   <ul>
     <li><strong>Reusing what already exists</strong>: this stage needed zero new OCI console resources.</li>
     <li><strong>Shaping the bronze table</strong>: typed columns plus a full-fidelity <code>raw_payload</code> safety net.</li>
-    <li><strong>The Credential Store, not Vault</strong>: a separate, AIDP-native place to keep secrets that a notebook can read directly, pointed at the Vault secrets already in place rather than duplicating them.</li>
+    <li><strong>The Credential Store</strong>: a separate, AIDP-native place to keep secrets that a notebook can read directly, pointed at the Vault secrets already in place rather than duplicating them.</li>
     <li><strong>Running the stream, and verifying it actually worked.</strong></li>
   </ul>
 
@@ -100,6 +100,34 @@
   </table>
 
   <p>Everything above comes straight from TfL. <code>timing</code> is the one exception kept as a raw <code>STRING</code> in the bronze table, parsed straight out of the JSON payload rather than declared as a nested field in the schema. The remaining bronze columns, <code>ingest_ts</code>, <code>ingest_source</code>, <code>raw_payload</code>, <code>event_date</code>, and <code>event_hour</code>, are added by the pipeline itself, not part of TfL's payload.</p>
+
+  <h2>The Credential Store</h2>
+
+  <p><code>aidputils.secrets.get(name=..., key=...)</code> is how the notebook reads the Kafka username and password, from AIDP's own <strong>Credential Store</strong> (Workbench sidebar, currently a Preview feature) rather than typing secrets directly into notebook code.</p>
+
+  <p>The Credential Store supports three credential types: <strong>Secret token</strong>, which stores one or more Key/Value pairs typed directly into the form; <strong>Service account</strong>, which takes a full OCI API signing key (user OCID, fingerprint, region, private key, tenancy) for authenticating as a specific OCI user; and <strong>Vault reference</strong>, which instead points at an existing Vault secret's OCID and reads its value from there. Since the Kafka username and password already exist as Vault secrets (<code>tfl-kafka-usr</code>/<code>tfl-kafka-pwd</code>) from the producer setup, Vault reference is the better fit here: nothing gets typed in or duplicated a second time.</p>
+
+  <p>Vault reference needs one extra IAM policy beyond what Secret token needs, called out right in the credential form itself. IAM policy to allow the AIDP instance to read secrets in the compartment:</p>
+
+  <pre><code>allow any-user to use secret in tenancy where all { request.principal.type = 'aidataplatform' }
+allow any-user to read secret-bundles in tenancy where all { request.principal.id = target.resource.tag.orcl-aidp.governingAidpId }</code></pre>
+
+  <p>A Vault reference credential holds exactly one value, with no Key/Value bundling, so the username and password each need their own credential rather than one shared one:</p>
+
+  <ol>
+    <li><strong>Credential store &gt; Create.</strong> Name: <code>tfl_kafka_usr_vault</code>. Credential type: <strong>Vault reference</strong>. Reference: the <code>tfl-kafka-usr</code> secret's OCID.</li>
+    <li>Repeat for the password: name <code>tfl_kafka_pwd_vault</code>, Reference: the <code>tfl-kafka-pwd</code> secret's OCID.</li>
+  </ol>
+
+  <figure>
+    <img alt="Credential Store list showing tfl_kafka_pwd_vault and tfl_kafka_usr_vault, both Vault reference, alongside the tfl_kafka Secret token credential" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/bronze-layer-spark-structured-streaming/images/bronze-credential-store-vault-list.png">
+    <figcaption>Both Vault reference credentials in the Credential Store, alongside the tfl_kafka Secret token credential, no longer used by the pipeline.</figcaption>
+  </figure>
+
+  <figure>
+    <img alt="tfl_kafka_usr_vault credential details, Type Vault reference, Reference field holding the Vault secret's OCID" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/bronze-layer-spark-structured-streaming/images/bronze-credential-store-vault-detail.png">
+    <figcaption>tfl_kafka_usr_vault's details: a single Reference field holding the Vault secret's OCID, nothing else to configure.</figcaption>
+  </figure>
 
   <h2>Opening the notebook and running the one-time setup</h2>
 
@@ -190,32 +218,7 @@ TBLPROPERTIES (
 
   <p><strong>Run both statements, in order.</strong> Pasting the <code>CREATE TABLE</code> alone without first running <code>CREATE VOLUME</code> produces a <code>VolumePathDoesNotExistException</code> once you get to the write-stream step later on, an error that surfaces well after the fact and isn't obviously connected back to this step.</p>
 
-  <h2>The Credential Store, not Vault</h2>
-
-  <p><code>aidputils.secrets.get(name=..., key=...)</code>, the call the credentials cell uses, does <strong>not</strong> read OCI Vault secrets directly. It reads from AIDP's own <strong>Credential Store</strong> (Workbench sidebar, currently a Preview feature), which is a separate concept from Vault's Secrets Management entirely.</p>
-
-  <p>The Credential Store supports two credential types: <strong>Secret token</strong>, which stores one or more Key/Value pairs typed directly into the form, and <strong>Vault reference</strong>, which instead points at an existing Vault secret's OCID and reads its value from there. Since the Kafka username and password already exist as Vault secrets (<code>tfl-kafka-usr</code>/<code>tfl-kafka-pwd</code>) from the producer setup, Vault reference is the better fit: nothing gets typed in or duplicated a second time.</p>
-
-  <p>A Vault reference credential holds exactly one value, with no Key/Value bundling, so the username and password each need their own credential rather than one shared one:</p>
-
-  <ol>
-    <li><strong>Credential store &gt; Create.</strong> Name: <code>tfl_kafka_usr_vault</code>. Credential type: <strong>Vault reference</strong>. Reference: the <code>tfl-kafka-usr</code> secret's OCID.</li>
-    <li>Repeat for the password: name <code>tfl_kafka_pwd_vault</code>, Reference: the <code>tfl-kafka-pwd</code> secret's OCID.</li>
-  </ol>
-
-  <p>Creating a Vault reference credential needs one IAM grant beyond what Secret token needs: a policy letting the AIDP resource principal read the referenced secret and its tags. Worth checking that policy first if credential creation comes back with an authorization error.</p>
-
-  <figure>
-    <img alt="Credential Store list showing tfl_kafka_pwd_vault and tfl_kafka_usr_vault, both Vault reference, alongside the tfl_kafka Secret token credential" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/bronze-layer-spark-structured-streaming/images/bronze-credential-store-vault-list.png">
-    <figcaption>Both Vault reference credentials in the Credential Store, alongside the tfl_kafka Secret token credential, no longer used by the pipeline.</figcaption>
-  </figure>
-
-  <figure>
-    <img alt="tfl_kafka_usr_vault credential details, Type Vault reference, Reference field holding the Vault secret's OCID" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/bronze-layer-spark-structured-streaming/images/bronze-credential-store-vault-detail.png">
-    <figcaption>tfl_kafka_usr_vault's details: a single Reference field holding the Vault secret's OCID, nothing else to configure.</figcaption>
-  </figure>
-
-  <p>With both credentials in place, the credentials cell:</p>
+  <p>With both credentials created above, the notebook's credentials cell:</p>
 
   <pre><code>KAFKA_BOOTSTRAP_SERVERS = "cell-1.streaming.eu-frankfurt-1.oci.oraclecloud.com:9092"
 KAFKA_TOPIC = "tfl-arrivals"
