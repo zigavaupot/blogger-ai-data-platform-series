@@ -1,9 +1,9 @@
 <article class="zv-blog-post">
 
-  <img alt="Bronze Layer: Spark Structured Streaming — a Spark Structured Streaming job consuming the tfl-arrivals OCI Streaming topic, parsing the JSON payload, adding event-time partitions and ingestion metadata, and appending everything into the tfl.bronze.arrivals_bronze Delta table, feeding the AI Data Platform's silver layer next in the series" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/bronze-layer-spark-structured-streaming/images/bronze-layer.png">
+  <img alt="Bronze Layer: Spark Structured Streaming, consuming the tfl-arrivals OCI Streaming topic, parsing the JSON payload, adding event-time partitions and ingestion metadata, and appending everything into the tfl.bronze.arrivals_bronze Delta table, feeding the AI Data Platform's silver layer next in the series" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/bronze-layer-spark-structured-streaming/images/bronze-layer.png">
 
   <div class="post-intro">
-    <p>This is the third technical post in the series that opened with <a href="https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html">Just Streams: Real-Time Data Pipelines on OCI</a>, following <a href="https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-oci-streaming.html">OCI Streaming and the Stream Producer</a>. That post got live TfL bus-arrival predictions flowing into the <code>tfl-arrivals</code> OCI Streaming topic. This one is where that data takes its first step inside the AI Data Platform itself: a Spark Structured Streaming job that reads the topic, parses it, and lands it as an append-only Delta table — the bronze layer.</p>
+    <p>This is the fourth post in the AI Data Platform series, following <a href="https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html">Just Streams: Real-Time Data Pipelines on OCI</a> (the series intro), <a href="https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-setting-up-ai.html">Setting Up the AI Data Platform Environment</a> (stage 0), and <a href="https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-oci-streaming.html">OCI Streaming and the Stream Producer</a> (stage 1). That last post got live TfL bus-arrival predictions flowing into the <code>tfl-arrivals</code> OCI Streaming topic. This post covers stage 2: a Spark Structured Streaming job that reads the topic, parses it, and lands it as an append-only Delta table, the bronze layer.</p>
   </div>
 
   <!--more-->
@@ -11,12 +11,11 @@
   <p>In this post I'll walk through:</p>
 
   <ul>
-    <li><strong>Reusing what already exists</strong> — this stage needed zero new OCI console resources, and one planned resource (a dedicated <code>tfl-bronze</code> bucket) turned out not to be necessary at all.</li>
-    <li><strong>Shaping the bronze table</strong> — typed columns plus a full-fidelity <code>raw_payload</code> safety net, and two fields the earlier version of this demo silently dropped.</li>
-    <li><strong>The Credential Store, not Vault</strong> — a separate, AIDP-native place to keep secrets that a notebook can read directly, and why a preview-feature IAM gap pushed one particular choice.</li>
-    <li><strong>Running the stream indefinitely, and stopping it on purpose</strong> — why the write cell blocks the notebook, and the two-step process to actually stop it.</li>
-    <li><strong>A console quirk worth knowing</strong> — cancelling a blocked streaming cell reliably leaves the notebook session wedged afterward, and the fix takes ten seconds once you know what it is.</li>
-    <li><strong>Verifying it actually worked</strong> — 36,000 rows in a 60-second test run, with the timestamp handling that made that possible.</li>
+    <li><strong>Reusing what already exists</strong>: this stage needed zero new OCI console resources.</li>
+    <li><strong>Shaping the bronze table</strong>: typed columns plus a full-fidelity <code>raw_payload</code> safety net.</li>
+    <li><strong>The Credential Store, not Vault</strong>: a separate, AIDP-native place to keep secrets that a notebook can read directly, and why a preview-feature IAM gap led to one particular choice.</li>
+    <li><strong>Running the stream, and stopping it on purpose</strong>: why the write cell blocks the notebook, the two-step process to stop it, and what to do if a cancelled cell leaves the cluster unresponsive.</li>
+    <li><strong>Verifying it actually worked</strong>: 36,000 rows in a 60-second test run, with the timestamp handling that made that possible.</li>
   </ul>
 
   <h2>Recap: where this data is coming from</h2>
@@ -35,28 +34,28 @@
 
   <p>Everything in this post is downstream of that topic. Nothing here talks to the TfL API directly.</p>
 
-  <h2>No new OCI resources — and one planned bucket that turned out unnecessary</h2>
+  <h2>No new OCI resources needed</h2>
 
-  <p>This stage reuses the <code>tfl_cluster</code> compute and the <code>tfl</code> catalog's <code>bronze</code> schema, both already in place from the AIDP environment setup. Everything else happens inside a notebook: <code>bronze_streaming_job.ipynb</code>.</p>
+  <p>This stage reuses the <code>tfl_cluster</code> compute and the <code>tfl</code> catalog's <code>bronze</code> schema, both already in place. Everything else happens inside a notebook, <code>bronze_streaming_job.ipynb</code>.</p>
 
-  <p>One correction worth flagging, because it changed a decision mid-stream: an earlier runbook had noted <code>tfl-bronze</code>/<code>tfl-silver</code>/<code>tfl-gold</code> Object Storage buckets as already created. On the real console, they didn't exist. Rather than create one just for this, the bronze table is a <strong>catalog-managed table</strong> — no explicit <code>LOCATION</code> clause. The <code>bronze</code> schema already has its own storage, visible in the Master Catalog UI as the <code>Tables</code>/<code>Volumes</code>/<code>Knowledge Bases</code>/<code>Models</code> categories underneath it. A dedicated bucket per medallion layer isn't actually needed for this to work, which is one fewer resource to keep track of.</p>
+  <p>Even though the data could have been stored in a dedicated Object Storage bucket per medallion layer, it doesn't need to be: the <code>bronze</code> schema already has its own storage, visible in the Master Catalog UI as the <code>Tables</code>/<code>Volumes</code>/<code>Knowledge Bases</code>/<code>Models</code> categories underneath it. So the bronze table is created without an explicit <code>LOCATION</code> clause: a catalog-managed table sitting on storage the schema already provides, one fewer resource to keep track of.</p>
 
   <h2>Shaping the bronze table</h2>
 
   <p>A few decisions made before writing any code:</p>
 
   <ul>
-    <li><strong>Typed columns, extended.</strong> Same pattern as an earlier version of this demo, but this time also capturing <code>timeToLive</code> and the nested <code>timing</code> object — both present in TfL's real payload but silently dropped before. <code>raw_payload</code>, the untouched original JSON string, is kept alongside the typed columns as a full-fidelity safety net.</li>
+    <li><strong>Typed columns for every field in TfL's real payload</strong>, including <code>timeToLive</code> and the nested <code>timing</code> object. <code>raw_payload</code>, the untouched original JSON string, is kept alongside the typed columns as a full-fidelity safety net.</li>
     <li><strong>One bronze table.</strong> The topic only ever carries arrival-prediction events today, so there's no need to split by entity type.</li>
-    <li><strong>A dedicated checkpoint volume</strong>, <code>tfl.bronze.tfl_volume</code>, deliberately not reused from the gold layer's own checkpoint volume — keeping each layer's pipeline state colocated with its own schema rather than borrowing another layer's. That costs one extra <code>CREATE VOLUME</code> statement (a catalog-native object, not a new OCI resource), and it does mean bronze and silver don't follow the same checkpoint convention yet — worth revisiting for silver later, not something that blocks here.</li>
+    <li><strong>A dedicated checkpoint volume</strong>, <code>tfl.bronze.tfl_volume</code>, kept separate from the gold layer's own checkpoint volume, so each layer's pipeline state stays colocated with its own schema instead of borrowing another layer's. That costs one extra <code>CREATE VOLUME</code> statement (a catalog-native object, not a new OCI resource); bronze and silver don't follow the same checkpoint convention yet, worth revisiting for silver later.</li>
     <li><strong>Manual notebook run for now</strong>, the same operating model the stream producer started with on a laptop before it moved to a VM. Automating this into a scheduled Job is a later-stage concern, not a day-one one.</li>
   </ul>
 
-  <p>The <code>timing</code> field's absence from the typed schema is deliberate rather than an oversight: the bronze table stores it as a raw <code>STRING</code>, pulled out of the JSON payload directly rather than declared as a nested <code>STRUCT</code> — the notebook UI's paste handling mangles <code>&lt;</code>/<code>&gt;</code> characters in SQL cells, which makes pasting a <code>STRUCT&lt;...&gt;</code> type definition there unreliable. Simpler to keep it as opaque JSON text and let whichever downstream layer actually needs it parse that string properly.</p>
+  <p><code>timing</code> is stored as a raw <code>STRING</code>, parsed straight out of the JSON payload rather than declared as a nested field in the schema.</p>
 
   <h2>Opening the notebook and running the one-time setup</h2>
 
-  <p><strong>Create &gt; Notebook</strong> in workspace <code>workspace001</code> (or open <code>bronze_streaming_job.ipynb</code> if it's already synced in), then attach it to <code>tfl_cluster</code>. The notebook mixes <code>%sql</code> cells and Python cells, so the notebook's default language stays Python — the <code>%sql</code> magic handles the SQL cells inline.</p>
+  <p><strong>Create &gt; Notebook</strong> in workspace <code>workspace001</code>, named <code>bronze_streaming_job</code>, attached to <code>tfl_cluster</code>. The notebook mixes <code>%sql</code> cells and Python cells, so the default language stays Python: the <code>%sql</code> magic handles the SQL cells inline.</p>
 
   <figure>
     <img alt="Workbench Create menu, showing Notebook as an option alongside Job, Python, SQL, and Folder" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/bronze-layer-spark-structured-streaming/images/bronze-create-notebook.png">
@@ -81,7 +80,7 @@ CREATE VOLUME IF NOT EXISTS tfl.bronze.tfl_volume;</code></pre>
 
   <figure>
     <img alt="CREATE VOLUME IF NOT EXISTS tfl.bronze.tfl_volume cell, returning status CREATED" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/bronze-layer-spark-structured-streaming/images/bronze-create-volume-sql.png">
-    <figcaption>Volume created — status CREATED.</figcaption>
+    <figcaption>Volume created, status CREATED.</figcaption>
   </figure>
 
   <pre><code>%sql
@@ -134,27 +133,24 @@ TBLPROPERTIES (
     <figcaption>tfl.bronze.tfl_volume under Volumes.</figcaption>
   </figure>
 
+  <p><strong>Run both statements, in order.</strong> Pasting the <code>CREATE TABLE</code> alone without first running <code>CREATE VOLUME</code> produces a <code>VolumePathDoesNotExistException</code> once you get to the write-stream step later on, an error that surfaces well after the fact and isn't obviously connected back to this step.</p>
+
+  <h2>The Credential Store, not Vault</h2>
+
+  <p><code>aidputils.secrets.get(name=..., key=...)</code>, the call the credentials cell uses, does <strong>not</strong> read OCI Vault secrets directly. It reads from AIDP's own <strong>Credential Store</strong> (Workbench sidebar, currently a Preview feature), which is a separate concept from Vault's Secrets Management entirely.</p>
+
   <figure>
     <img alt="Master Catalog tree showing tfl.bronze.arrivals_bronze under Tables" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/bronze-layer-spark-structured-streaming/images/bronze-volume-table-created.png">
     <figcaption>tfl.bronze.arrivals_bronze under Tables.</figcaption>
   </figure>
 
-  <p><strong>Run both statements, in order.</strong> Pasting the <code>CREATE TABLE</code> alone without first running <code>CREATE VOLUME</code> produces a <code>VolumePathDoesNotExistException</code> once you get to the write-stream step later on — an error that surfaces well after the fact and isn't obviously connected back to this step.</p>
-
-  <h2>The Credential Store, not Vault</h2>
-
-  <p><code>aidputils.secrets.get(name=..., key=...)</code> — the call the credentials cell uses — does <strong>not</strong> read OCI Vault secrets directly. It reads from AIDP's own <strong>Credential Store</strong> (Workbench sidebar, currently a Preview feature), which is a separate concept from Vault's Secrets Management entirely. Before running the credentials cell, the credential it expects has to exist:</p>
+  <p>Before running the credentials cell, the credential it expects has to exist:</p>
 
   <ol>
     <li><strong>Credential store &gt; Create.</strong> Name: <code>tfl_kafka</code>.</li>
-    <li>Credential type: <strong>Secret token</strong>, not "Vault reference." A Vault reference — pointing at a Vault secret OCID instead of storing the value directly — is the cleaner option in principle, but creating one failed here with an IAM error: the AIDP resource principal isn't authorized to update secret tags in this tenancy. Fixing that means widening tenancy IAM policy for a Preview feature, which isn't worth it for a demo pipeline — hence Secret token instead.</li>
-    <li>Two Key/Value rows: <code>KAFKA_USERNAME</code> and <code>KAFKA_PASSWORD</code>, holding the same values already stored in the <code>tfl-kafka-usr</code>/<code>tfl-kafka-pwd</code> Vault secrets from the producer setup. <strong>Double-check these two aren't swapped</strong> between the Key/Value rows — mixing them up produces a <code>SaslAuthenticationException: Authentication failed</code> that gives no hint the values are just in the wrong slots.</li>
+    <li>Credential type: <strong>Secret token</strong>, not "Vault reference." A Vault reference (pointing at a Vault secret OCID instead of storing the value directly) is the cleaner option in principle, but creating one failed here with an IAM error: the AIDP resource principal isn't authorized to update secret tags in this tenancy. Fixing that means widening tenancy IAM policy for a Preview feature, which isn't worth it for a demo pipeline, so Secret token is used instead.</li>
+    <li>Two Key/Value rows: <code>KAFKA_USERNAME</code> and <code>KAFKA_PASSWORD</code>, holding the same values already stored in the <code>tfl-kafka-usr</code>/<code>tfl-kafka-pwd</code> Vault secrets from the producer setup. <strong>Double-check these two aren't swapped</strong> between the Key/Value rows: mixing them up produces a <code>SaslAuthenticationException: Authentication failed</code> that gives no hint the values are just in the wrong slots.</li>
   </ol>
-
-  <figure>
-    <img alt="Credential Store, Secret token type, tfl_kafka with KAFKA_USERNAME and KAFKA_PASSWORD key/value rows" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/bronze-layer-spark-structured-streaming/images/bronze-credential-store-secret.png">
-    <figcaption>tfl_kafka, Secret token, with its two Key/Value rows.</figcaption>
-  </figure>
 
   <figure>
     <img alt="Credential Store list showing tfl_kafka after creation" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/bronze-layer-spark-structured-streaming/images/bronze-credential-store-list.png">
@@ -178,11 +174,6 @@ from pyspark.sql.functions import (
     col, from_json, get_json_object, current_timestamp, lit, to_date, hour
 )
 
-# `timing` is intentionally NOT part of the typed schema below -- it's
-# pulled out separately as raw JSON text (see the parse cell) to match
-# the bronze table's `timing STRING` column, avoiding a nested STRUCT
-# type entirely (the notebook UI's paste handling mangles `&lt;`/`&gt;` in SQL
-# cells, so nested STRUCT&lt;...&gt; DDL isn't safe to paste there).
 tfl_schema = StructType([
     StructField("id", StringType()),
     StructField("operationType", IntegerType()),
@@ -236,8 +227,6 @@ raw_kafka_df = (
         .select(col("value").cast("string").alias("raw_payload"))
         .withColumn("json", from_json(col("raw_payload"), tfl_schema))
         .select("raw_payload", "json.*")
-        # timing pulled out as raw JSON text, not a typed struct -- see
-        # the schema cell's comment for why
         .withColumn("timing", get_json_object(col("raw_payload"), "$.timing"))
         .withColumn("timestamp", col("timestamp").cast("timestamp"))
         .withColumn("expectedArrival", col("expectedArrival").cast("timestamp"))
@@ -250,9 +239,9 @@ raw_kafka_df = (
         .withColumn("event_hour", hour(col("timestamp")))
 )</code></pre>
 
-  <p>One thing worth knowing if a credential value ever changes and needs a re-run: the <code>readStream</code> cell bakes the current <code>KAFKA_USERNAME</code>/<code>KAFKA_PASSWORD</code> into its SASL config as literal text the moment that cell executes — Spark doesn't re-read the Python variables later. After fixing a credential, both the credentials cell <em>and</em> the <code>readStream</code> cell (and the parse cell, which depends on its output) need to be re-run before retrying the write stream, not just the credentials cell alone.</p>
+  <p>One thing worth knowing if a credential value ever changes and needs a re-run: the <code>readStream</code> cell bakes the current <code>KAFKA_USERNAME</code>/<code>KAFKA_PASSWORD</code> into its SASL config as literal text the moment that cell executes; Spark doesn't re-read the Python variables later. After fixing a credential, both the credentials cell <em>and</em> the <code>readStream</code> cell (and the parse cell, which depends on its output) need to be re-run before retrying the write stream, not just the credentials cell alone.</p>
 
-  <h2>Running the streaming write cell</h2>
+  <h2>Running the stream, and stopping it on purpose</h2>
 
   <pre><code>CHECKPOINT_PATH = "/Volumes/tfl/bronze/tfl_volume/checkpoints/arrivals-bronze"
 
@@ -265,19 +254,25 @@ query = (
         .toTable("tfl.bronze.arrivals_bronze")
 )
 
+#######
+# this part is for testing only;
+#######
+#test_query.awaitTermination(timeout=60)    # seconds
+#test_query.stop()
+
 query.awaitTermination()</code></pre>
 
   <figure>
-    <img alt="The streaming write cell, running against the bronze Delta table with a 2-second trigger" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/bronze-layer-spark-structured-streaming/images/bronze-streaming-running.png">
-    <figcaption>The write-stream cell, running.</figcaption>
+    <img alt="The streaming write cell, running indefinitely against the bronze Delta table with a 2-second trigger" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/bronze-layer-spark-structured-streaming/images/bronze-streaming-running.png">
+    <figcaption>The write-stream cell, running indefinitely.</figcaption>
   </figure>
 
-  <p>Run it whenever data should be flowing. It runs <strong>indefinitely and on demand</strong> — no bounded test, no scheduled Job — matching the manual-run model decided above. It also <strong>blocks the notebook</strong>: the cell keeps running until stopped, and no other cell in that same notebook can execute while it's active. Checking on the table's contents while the stream is running needs a second notebook attached to the same cluster — its kernel session is independent, so it can safely run read-only <code>%sql</code> queries against <code>tfl.bronze.arrivals_bronze</code> concurrently.</p>
+  <p>Run it whenever data should be flowing. It runs indefinitely and on demand, matching a manual-run model, no scheduled Job. It also <strong>blocks the notebook</strong>: the cell keeps running until stopped, and no other cell in that same notebook can execute while it's active. Checking on the table's contents while the stream is running needs a second notebook attached to the same cluster: its kernel session is independent, so it can safely run read-only <code>%sql</code> queries against <code>tfl.bronze.arrivals_bronze</code> concurrently. The commented-out lines above show a bounded test run instead, useful the first time through, before switching over to the indefinite version once the wiring is confirmed.</p>
 
   <p>Stopping it is two steps, not one, because the write cell blocks the kernel:</p>
 
   <ol>
-    <li><strong>Interrupt the running cell</strong> — the stop button, or Kernel &gt; Interrupt. This raises a <code>KeyboardInterrupt</code> inside <code>awaitTermination()</code> and frees the kernel again, but the streaming query itself keeps running in the background until told to stop.</li>
+    <li><strong>Interrupt the running cell</strong>, the stop button, or Kernel &gt; Interrupt. This raises a <code>KeyboardInterrupt</code> inside <code>awaitTermination()</code> and frees the kernel again, but the streaming query itself keeps running in the background until told to stop.</li>
     <li><strong>Run the next cell</strong>, <code>query.stop()</code>, to actually stop the query and release the checkpoint.</li>
   </ol>
 
@@ -285,15 +280,9 @@ query.awaitTermination()</code></pre>
 
   <pre><code>print(query.isActive)  # expect: False</code></pre>
 
-  <p>To check whether a stream is already active before interrupting — picking the notebook back up unsure if a previous run is still going — the notebook's own Spark UI Streaming tab is the way to check; the notebook itself is unusable for that while the write cell is running.</p>
+  <p>To check whether a stream is already active before interrupting, useful when picking the notebook back up unsure if a previous run is still going, the notebook's own Spark UI Streaming tab is the way to check.</p>
 
-  <h2>A console quirk: cancelling wedges the session</h2>
-
-  <p>One behavior worth calling out explicitly, because it showed up consistently rather than as a one-off fluke: cancelling a blocked <code>awaitTermination()</code> cell from the AIDP console's own Cancel button — as opposed to letting <code>query.stop()</code> run normally — reliably left the notebook's compute-cluster session unresponsive afterward. Symptoms ranged from a harmless <code>NameError</code> on a stale Python variable, up to every subsequent cell in that notebook — including a trivial <code>1+1</code> — failing with a generic "Command execution failed on compute cluster."</p>
-
-  <p>The first thing worth checking when this happens: is the write-stream cell actually still running as expected? A busy, small (1-worker) cluster running a continuous 2-second-trigger streaming job can make a <em>second</em> notebook's command fail or queue purely from resource contention, which looks similar but isn't the same problem. The real wedge case is when the stream was already stopped or cancelled, and things are still failing.</p>
-
-  <p>The fix, reliable every time it came up: <strong>detach the notebook from its cluster and re-attach it.</strong> That resets the notebook's REPL session without restarting the cluster itself or touching any data — Delta's checkpoint means the bronze table and its checkpoint state are unaffected either way, since nothing was actively streaming after a cancel. A trivial <code>1+1</code> is a quick way to confirm the session is responsive again before re-running anything stream-related. If detach/reattach doesn't clear it, restarting the compute cluster is the fallback, and just as safe for the same reason.</p>
+  <p>One thing worth knowing: cancelling a blocked cell from the console's own Cancel button, rather than letting it interrupt and <code>query.stop()</code> normally, can leave the notebook's cluster session unresponsive afterward, even a trivial <code>1+1</code> failing to run. If that happens, detach the notebook from its cluster and reattach it: that resets the session without restarting the cluster or affecting the checkpoint.</p>
 
   <h2>Verifying it worked</h2>
 
@@ -319,13 +308,9 @@ LIMIT 20;</code></pre>
     <figcaption>Sample of the 20 most recently ingested rows.</figcaption>
   </figure>
 
-  <p>A 60-second bounded test run landed 36,000 rows with no null timestamps across <code>timestamp</code>, <code>expectedArrival</code>, or <code>timeToLive</code> — despite <code>timestamp</code>'s extra fractional-second digit in the raw payload, the plain <code>.cast("timestamp")</code> in the parse cell handles it fine, no format string needed. Once that was confirmed, the notebook was switched over to the indefinite version above — there's no separate bounded test cell left in it now, since the wiring is already proven.</p>
+  <p>A 60-second bounded test run landed 36,000 rows with no null timestamps across <code>timestamp</code>, <code>expectedArrival</code>, and <code>timeToLive</code>: despite <code>timestamp</code>'s extra fractional-second digit in the raw payload, the plain <code>.cast("timestamp")</code> in the parse cell handles it fine, no format string needed.</p>
 
   <p>This step works whether the stream is still running or has just been stopped: the table keeps whatever rows already landed either way.</p>
-
-  <h2>Stopping for the day</h2>
-
-  <p>Once the stream is stopped, stopping <code>tfl_cluster</code> too — if silver or gold work isn't happening right after — avoids paying for idle compute between sessions. Same cost discipline as the producer's own always-on-but-cheap VM from the last post.</p>
 
   <h2>What's next</h2>
 
