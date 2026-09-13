@@ -327,14 +327,14 @@ query.awaitTermination()
 
 <figure>
   <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/bronze-layer-spark-structured-streaming/images/bronze-streaming-running.png" alt="The streaming write cell, running indefinitely against the bronze Delta table with a 2-second trigger">
-  <figcaption>The write-stream cell, running indefinitely: the notebook stays busy here until the cell is interrupted and the query is explicitly stopped.</figcaption>
+  <figcaption>The write-stream cell, running indefinitely: the notebook stays busy here until the cell is cancelled and the query is explicitly stopped.</figcaption>
 </figure>
 
 Run it whenever data should be flowing. It runs indefinitely and on demand, matching a manual-run model, no scheduled Job. It also **blocks the notebook**: the cell keeps running until stopped, and no other cell in that same notebook can execute while it's active. Checking on the table's contents while the stream is running needs a second notebook attached to the same cluster: its kernel session is independent, so it can safely run read-only `%sql` queries against `tfl.bronze.arrivals_bronze` concurrently. The commented-out lines above show a bounded test run instead, useful the first time through, before switching over to the indefinite version once the wiring is confirmed.
 
 Stopping it is two steps, not one, because the write cell blocks the kernel:
 
-1. **Interrupt the running cell**, the stop button, or Kernel > Interrupt. This raises a `KeyboardInterrupt` inside `awaitTermination()` and frees the kernel again, but the streaming query itself keeps running in the background until told to stop.
+1. **Cancel the running cell**, the cell's own Cancel option; that's the only way to interrupt it, there's no separate stop or interrupt control. This raises a `KeyboardInterrupt` inside `awaitTermination()`, but the streaming query itself keeps running in the background until told to stop, and cancelling like this can also leave the notebook's cluster session unresponsive afterward, see the note below.
 2. **Run the next cell**, `query.stop()`, to actually stop the query and release the checkpoint.
 
 ```python
@@ -345,9 +345,9 @@ query.stop()
 print(query.isActive)  # expect: False
 ```
 
-To check whether a stream is already active before interrupting, useful when picking the notebook back up unsure if a previous run is still going, the notebook's own Spark UI Streaming tab is the way to check.
+To check whether a stream is already active before cancelling, useful when picking the notebook back up unsure if a previous run is still going, the notebook's own Spark UI Streaming tab is the way to check.
 
-One thing worth knowing: cancelling a blocked cell from the console's own Cancel button, rather than letting it interrupt and `query.stop()` normally, can leave the notebook's cluster session unresponsive afterward, even a trivial `1+1` failing to run. If that happens, detach the notebook from its cluster and reattach it: that resets the session without restarting the cluster or affecting the checkpoint.
+One thing worth knowing: cancelling a blocked cell like this can leave the notebook's cluster session unresponsive afterward, even a trivial `1+1` failing to run. If that happens, detach the notebook from its cluster and reattach it: that resets the session without restarting the cluster or affecting the checkpoint, then retry `query.stop()`.
 
 ## Verifying it worked
 
