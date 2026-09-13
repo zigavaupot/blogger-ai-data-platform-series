@@ -11,3 +11,9 @@ This is summary blog post with references to posts published under **AI Data Pla
 
 ![OCI Streaming and Stream Producer](https://zigavaupot.github.io/blogger-ai-data-platform-series/oci-streaming-and-stream-producer/images/oci-streaming-to-aidp.png)
 [OCI Streaming and Stream Producer](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-oci-streaming.html)
+
+![Bronze Layer: Spark Structured Streaming](https://zigavaupot.github.io/blogger-ai-data-platform-series/bronze-layer-spark-structured-streaming/images/bronze-layer.png)
+[Bronze Layer: Spark Structured Streaming](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-bronze-layer.html)
+
+![Silver Layer: Spark Structured Streaming](https://zigavaupot.github.io/blogger-ai-data-platform-series/silver-layer-spark-structured-streaming/images/silver-layer.png)
+[Silver Layer: Spark Structured Streaming](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-silver-layer.html)

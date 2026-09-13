@@ -1,0 +1,284 @@
+![Silver Layer: Spark Structured Streaming, reading the append-only tfl.bronze.arrivals_bronze Delta table, cleaning and type-casting it, keeping only the latest prediction per vehicle/stop/line/direction, and upserting the result into tfl.silver.arrivals_silver via a foreachBatch MERGE, with OCI Logging added at the batch level](https://zigavaupot.github.io/blogger-ai-data-platform-series/silver-layer-spark-structured-streaming/images/silver-layer.png)
+
+# Silver Layer: Spark Structured Streaming (Part 5 of the AI Data Platform Series)
+
+*This is the fifth post in the AI Data Platform series, following [Just Streams: Real-Time Data Pipelines on OCI](https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html) (the series intro), [Setting Up the AI Data Platform Environment](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-setting-up-ai.html) (stage 0), [OCI Streaming and the Stream Producer](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-oci-streaming.html) (stage 1), and [Bronze Layer: Spark Structured Streaming](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-bronze-layer.html) (stage 2). That last post landed every arrival prediction as-is into an append-only Delta table, `tfl.bronze.arrivals_bronze`. This post covers stage 3: cleaning that data up, keeping only the latest prediction per vehicle/stop/line/direction, and upserting it into a proper silver table.*
+
+In this post I'll walk through:
+
+- **Shaping the silver table**: a 4-column business key, and two small judgment calls on which bronze fields carry forward.
+- **Cleaning and typing the bronze stream**, then ranking each micro-batch down to one row per key.
+- **The `MERGE`**: why Delta needs `foreachBatch` for this, and how the upsert condition avoids clobbering fresher rows with stale ones.
+- **OCI Logging**, added at the batch level, and the pragmatic call I made on how to authenticate it for a demo like this one.
+- **Running the pipeline against bronze's live backlog**, and confirming the dedup actually held.
+
+## Recap: what we have so far
+
+`tfl.bronze.arrivals_bronze` has been filling up since the last post: every message TfL's Unified API produces, landed as-is, one row per prediction, with a full-fidelity `raw_payload` column alongside the typed fields. Nothing in bronze is deduplicated or cleaned; the same vehicle approaching the same stop shows up over and over as TfL keeps refreshing its estimate.
+
+That's exactly what a bronze layer is for. Silver is where it gets turned into something more usable: one row per `(vehicleId, naptanId, lineId, direction)`, always reflecting the latest prediction, kept current by an upsert rather than a plain append.
+
+## Shaping the silver table
+
+Like bronze, this stage needed no new core OCI resources: it reuses `tfl_cluster` and the `tfl` catalog's `silver` schema, both already in place from stage 0. Two small decisions shaped the table itself before writing any code.
+
+The dedup key is a 4-column composite: `vehicleId`, `naptanId`, `lineId`, `direction`. A single vehicle can appear multiple times in the same batch if it's serving more than one line or has predictions queued for more than one upcoming stop, so all four columns together are what actually identifies "the current prediction for this vehicle, at this stop, on this line, in this direction."
+
+The other decision was what to carry forward from bronze's two odder fields. `timeToLive`, the point after which a prediction should be considered stale, is already a clean `TIMESTAMP` in bronze, so it carries straight through since it's likely useful downstream. `timing`, TfL's internal diagnostic object with its own source/insert/read/sent/received sub-timestamps, gets dropped at this layer: it's upstream plumbing detail, not cleaned business data. Easy to add back later as a passthrough column if it turns out to matter.
+
+Same per-layer-resources approach as bronze: a dedicated checkpoint volume, `tfl.silver.tfl_volume`, rather than reusing one from another schema, and catalog-managed storage with no explicit `LOCATION`.
+
+```sql
+%sql
+USE CATALOG tfl;
+USE SCHEMA silver;
+```
+
+```sql
+%sql
+CREATE VOLUME IF NOT EXISTS tfl.silver.tfl_volume;
+```
+
+```sql
+%sql
+CREATE TABLE IF NOT EXISTS tfl.silver.arrivals_silver (
+  -- Business keys (uniqueness / dedup key)
+  vehicleId               STRING,
+  naptanId                STRING,
+  lineId                  STRING,
+  direction               STRING,
+
+  -- Cleaned/typed TfL fields
+  id                      STRING,
+  operationType           INT,
+  stationName             STRING,
+  lineName                STRING,
+  platformName            STRING,
+  bearing                 DOUBLE,
+  tripId                  STRING,
+  baseVersion             STRING,
+  destinationNaptanId     STRING,
+  destinationName         STRING,
+  event_ts                TIMESTAMP,
+  timeToStation           INT,
+  currentLocation         STRING,
+  towards                 STRING,
+  expectedArrival         TIMESTAMP,
+  timeToLive              TIMESTAMP,
+  modeName                STRING,
+
+  -- Lineage / ops
+  bronze_ingest_ts        TIMESTAMP,
+  ingest_ts               TIMESTAMP,
+  ingest_source           STRING,
+
+  -- Partition helper
+  event_date              DATE
+)
+USING DELTA
+PARTITIONED BY (event_date)
+TBLPROPERTIES (
+  'delta.autoOptimize.optimizeWrite' = 'true',
+  'delta.autoOptimize.autoCompact'  = 'true',
+  'delta.universalFormat.enabledFormats' = 'iceberg'
+);
+```
+
+<figure>
+  <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/silver-layer-spark-structured-streaming/images/silver-ddl-cells.png" alt="silver_streaming_job.ipynb running the checkpoint volume and CREATE TABLE cells, with the arrivals_silver table and tfl_volume visible in the Master Catalog tree">
+  <figcaption>The checkpoint volume and silver table created, visible in the Master Catalog tree on the left.</figcaption>
+</figure>
+
+## Reading bronze, cleaning, and de-duplicating
+
+Bronze's `timestamp`, `expectedArrival`, and `timeToLive` columns are already `TIMESTAMP`-typed there, since bronze casts them on the way in. So this step is mostly renaming and deriving, not re-parsing: `timestamp` becomes `event_ts`, bronze's own `ingest_ts` becomes `bronze_ingest_ts` to make room for silver's own fresh `ingest_ts`, and `event_date` gets derived for partitioning. The one real transform is `bearing`, which bronze stores as a raw string; a regex extracts the leading numeric part and casts it to `DOUBLE`.
+
+```python
+from pyspark.sql.functions import col, regexp_extract, current_timestamp, to_date
+
+bronze_stream = spark.readStream.format("delta").table("tfl.bronze.arrivals_bronze")
+
+silver_candidates = (
+    bronze_stream
+        .withColumnRenamed("timestamp", "event_ts")
+        .withColumnRenamed("ingest_ts", "bronze_ingest_ts")
+        # bronze's bearing is a raw STRING; extract the leading numeric part
+        .withColumn(
+            "bearing",
+            regexp_extract(col("bearing"), r"^(-?\d+(\.\d+)?)", 1).cast("double")
+        )
+        .withColumn("ingest_ts", current_timestamp())
+        .withColumn("event_date", to_date(col("event_ts")))
+        # require the dedup key fields + event_ts to be present
+        .filter(
+            col("vehicleId").isNotNull() &
+            col("naptanId").isNotNull() &
+            col("lineId").isNotNull() &
+            col("direction").isNotNull() &
+            col("event_ts").isNotNull()
+        )
+        .select(
+            "vehicleId", "naptanId", "lineId", "direction",
+            "id", "operationType", "stationName", "lineName",
+            "platformName", "bearing", "tripId", "baseVersion",
+            "destinationNaptanId", "destinationName",
+            "event_ts", "timeToStation", "currentLocation",
+            "towards", "expectedArrival", "timeToLive", "modeName",
+            "bronze_ingest_ts", "ingest_ts", "ingest_source",
+            "event_date"
+        )
+)
+```
+
+<figure>
+  <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/silver-layer-spark-structured-streaming/images/silver-read-clean-cell.png" alt="The silver_candidates cell, reading tfl.bronze.arrivals_bronze as a stream and renaming/deriving columns">
+  <figcaption>silver_candidates: bronze read as a stream, renamed, typed, and filtered down to rows with a complete key.</figcaption>
+</figure>
+
+## The `foreachBatch` upsert
+
+Delta doesn't support a plain streaming `MERGE`, so a streaming upsert needs `foreachBatch`: a function that runs once per micro-batch and does an ordinary batch `MERGE` against whatever rows arrived in that batch. Within each micro-batch, `row_number()` ranks rows by `(vehicleId, naptanId, lineId, direction)`, ordered by `event_ts` and then `bronze_ingest_ts`, both descending. Only the top-ranked row per key survives; that's the "latest per key" logic. The survivors get published as a global temp view, since a `%sql`-style `MERGE` statement needs something it can reference by name, then merged into the silver table.
+
+The `WHEN MATCHED` condition is what keeps this safe against out-of-order batches: a row only overwrites the existing one if its `event_ts` is genuinely newer, or ties on `event_ts` and wins on `bronze_ingest_ts`. Without that, a late-arriving batch with an older prediction could otherwise stomp on a newer one already sitting in the table.
+
+```python
+from pyspark.sql import Window
+from pyspark.sql.functions import row_number
+
+SILVER_TABLE = "tfl.silver.arrivals_silver"
+KEY_COLS = ["vehicleId", "naptanId", "lineId", "direction"]
+
+
+def upsert_latest_per_key(batch_df, batch_id: int):
+    try:
+        if batch_df.rdd.isEmpty():
+            log_to_oci(f"batch_id={batch_id} empty_batch=true")
+            return
+
+        w = Window.partitionBy(*KEY_COLS).orderBy(
+            col("event_ts").desc(),
+            col("bronze_ingest_ts").desc()
+        )
+
+        latest_in_batch = (
+            batch_df
+                .withColumn("rn", row_number().over(w))
+                .filter(col("rn") == 1)
+                .drop("rn")
+        )
+
+        latest_in_batch.createOrReplaceGlobalTempView("silver_updates")
+
+        merge_sql = f"""
+        MERGE INTO {SILVER_TABLE} AS s
+        USING global_temp.silver_updates AS u
+        ON  s.vehicleId = u.vehicleId
+        AND s.naptanId  = u.naptanId
+        AND s.lineId    = u.lineId
+        AND s.direction = u.direction
+        WHEN MATCHED AND (
+            u.event_ts > s.event_ts OR
+            (u.event_ts = s.event_ts AND u.bronze_ingest_ts >= s.bronze_ingest_ts)
+        ) THEN UPDATE SET *
+        WHEN NOT MATCHED THEN INSERT *
+        """
+
+        spark.sql(merge_sql)
+        log_to_oci(f"batch_id={batch_id} action=merge rows={latest_in_batch.count()}")
+
+    except Exception as e:
+        log_to_oci(f"batch_id={batch_id} action=error error={str(e)[:500]}")
+        raise
+```
+
+<figure>
+  <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/silver-layer-spark-structured-streaming/images/silver-foreachbatch-merge-cell.png" alt="The upsert_latest_per_key foreachBatch function, ranking rows by window and running the MERGE INTO statement">
+  <figcaption>upsert_latest_per_key(): rank, keep the top row per key, publish as a global temp view, MERGE.</figcaption>
+</figure>
+
+## OCI Logging, briefly
+
+Each `foreachBatch` call also writes a line to OCI Logging (`log_to_oci()`, called above): batch id, row count, or the error if the `MERGE` failed. AIDP's notebooks don't expose a resource-principal token or standard OCI instance-metadata access, so neither of the two "automatic identity" mechanisms OCI normally offers worked here, and the Credential Store's Service account credential type can't be created from a currently logged-in user's own identity either. For this demo, the pragmatic fix was my own OCI API signing key, uploaded once into the workspace's own file storage and referenced by path. It ties the pipeline's logging permission to my personal identity rather than a proper scoped service account, which would be the right call for anything beyond a demo like this one, but it's more setup than this feature needed here.
+
+## Running the stream, verifying, and stopping it
+
+Same manual, on-demand model as bronze: run the write cell when data should flow, stop it when done. The trigger interval is 5 seconds here rather than bronze's 2, since every micro-batch now also runs a `MERGE`, a heavier operation than a plain append.
+
+```python
+CHECKPOINT_PATH = "/Volumes/tfl/silver/tfl_volume/checkpoints/arrivals-silver"
+TRIGGER_SEC = 5
+
+query = (
+    silver_candidates.writeStream
+        .foreachBatch(upsert_latest_per_key)
+        .option("checkpointLocation", CHECKPOINT_PATH)
+        .trigger(processingTime=f"{TRIGGER_SEC} seconds")
+        .start()
+)
+
+query.awaitTermination()
+```
+
+<figure>
+  <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/silver-layer-spark-structured-streaming/images/silver-streaming-running.png" alt="The silver write-stream cell running, blocked on awaitTermination">
+  <figcaption>The write-stream cell, running: blocked on awaitTermination() until cancelled.</figcaption>
+</figure>
+
+With bronze's stream running to keep data flowing, silver's very first micro-batch picked up bronze's entire existing backlog at once: 76,447 rows, merged in a single batch. Stopping the stream is the same two-step dance as bronze: cancel the blocked write cell (its own Cancel option, the only interrupt control this notebook UI has), then run `query.stop()` in a separate cell to actually release the checkpoint.
+
+<figure>
+  <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/silver-layer-spark-structured-streaming/images/silver-stream-cancelled.png" alt="The write-stream cell after Cancel, showing the last log line and 'Request is cancelled by the user'">
+  <figcaption>The same cell right after Cancel: the last batch's log line is still there, and the cancellation itself shows up as "Request is cancelled by the user."</figcaption>
+</figure>
+
+```python
+query.stop()
+```
+
+```python
+print(query.isActive)  # expect: False
+```
+
+Verifying it worked meant two things. First, the ordinary checks:
+
+```sql
+%sql
+SELECT count(*) AS row_count, max(ingest_ts) AS last_ingest
+FROM tfl.silver.arrivals_silver;
+```
+
+```sql
+%sql
+SELECT vehicleId, naptanId, lineId, direction, stationName, event_ts, expectedArrival, ingest_ts
+FROM tfl.silver.arrivals_silver
+ORDER BY ingest_ts DESC
+LIMIT 20;
+```
+
+<figure>
+  <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/silver-layer-spark-structured-streaming/images/silver-verify-query.png" alt="Verification query result: row_count 76447, last_ingest 2026-09-13 16:07:58.987Z">
+  <figcaption>76,447 rows landed from bronze's backlog in one batch, with a recent last_ingest timestamp.</figcaption>
+</figure>
+
+Second, and more specific to this layer: a dedup sanity check, run from the second observational notebook attached to the same cluster while the main job runs.
+
+```sql
+%sql
+SELECT vehicleId, naptanId, lineId, direction, count(*) AS cnt
+FROM tfl.silver.arrivals_silver
+GROUP BY vehicleId, naptanId, lineId, direction
+HAVING count(*) > 1;
+```
+
+That query came back empty, confirming the latest-per-key logic held: every key in the table has exactly one row. OCI Logging held up too; the `batch_id=0 action=merge rows=76447` line showed up as a real structured entry in the Log Explorer, not just a local print.
+
+<figure>
+  <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/silver-layer-spark-structured-streaming/images/silver-log-explorer.png" alt="OCI Logging Log Explorer showing the tfl-silver-app-logs entry with message batch_id=0 action=merge rows=76447, plus full compartment/log group/tenant metadata">
+  <figcaption>The same batch's log line, landed in tfl-silver-app-logs with real OCI metadata attached.</figcaption>
+</figure>
+
+## What's next
+
+With `tfl.silver.arrivals_silver` staying current as a clean, deduplicated table, the next post moves to the **gold layer**: aggregating this into something Oracle Analytics Cloud can query directly, and starting to bring in position data for mapping.
+
+*Related: [Just Streams: Real-Time Data Pipelines on OCI](https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html) (series intro), [Setting Up the AI Data Platform Environment](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-setting-up-ai.html), [OCI Streaming and the Stream Producer](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-oci-streaming.html), [Bronze Layer: Spark Structured Streaming](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-bronze-layer.html)*
