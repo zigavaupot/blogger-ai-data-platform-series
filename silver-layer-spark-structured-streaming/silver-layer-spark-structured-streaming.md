@@ -6,25 +6,27 @@
 
 In this post I'll walk through:
 
-- **Shaping the silver table**: a 4-column business key, and two small judgment calls on which bronze fields carry forward.
-- **Cleaning and typing the bronze stream**, then ranking each micro-batch down to one row per key.
-- **The `MERGE`**: why Delta needs `foreachBatch` for this, and how the upsert condition avoids clobbering fresher rows with stale ones.
-- **OCI Logging**, added at the batch level, and the pragmatic call I made on how to authenticate it for a demo like this one.
-- **Running the pipeline against bronze's live backlog**, and confirming the dedup actually held.
+- **Shaping the silver table**: what makes one row unique, and which bronze fields I kept or left out, and why.
+- **Cleaning up the data**: turning the many repeated updates TfL sends for the same bus into one clean row.
+- **Updating the table safely**: why a normal streaming write can't update rows that are already there, the workaround I use, and how I stop old data from overwriting newer data.
+- **Watching it with logging**: a simple way to see what the pipeline is doing while it runs, and how I got that working for a demo like this.
+- **Running it on real data**: pointing the pipeline at everything bronze had already collected, and checking the cleanup actually worked.
 
 ## Recap: what we have so far
 
 `tfl.bronze.arrivals_bronze` has been filling up since the last post: every message TfL's Unified API produces, landed as-is, one row per prediction, with a full-fidelity `raw_payload` column alongside the typed fields. Nothing in bronze is deduplicated or cleaned; the same vehicle approaching the same stop shows up over and over as TfL keeps refreshing its estimate.
 
-That's exactly what a bronze layer is for. Silver is where it gets turned into something more usable: one row per `(vehicleId, naptanId, lineId, direction)`, always reflecting the latest prediction, kept current by an upsert rather than a plain append.
+Think of bronze like a messy inbox: every update TfL sends gets saved, even the tenth reminder about the same bus approaching the same stop. That's fine for bronze, it's meant to be a complete, honest copy of everything that happened, nothing thrown away.
+
+Silver is where I clean that inbox up. One row per `(vehicleId, naptanId, lineId, direction)`, in plain terms, one row per "this bus, at this stop, on this line, going this direction", always showing the latest prediction, kept current by updating existing rows instead of just piling on more of them.
 
 ## Shaping the silver table
 
 Like bronze, this stage needed no new core OCI resources: it reuses `tfl_cluster` and the `tfl` catalog's `silver` schema, both already in place from stage 0. Two small decisions shaped the table itself before writing any code.
 
-The dedup key is a 4-column composite: `vehicleId`, `naptanId`, `lineId`, `direction`. A single vehicle can appear multiple times in the same batch if it's serving more than one line or has predictions queued for more than one upcoming stop, so all four columns together are what actually identifies "the current prediction for this vehicle, at this stop, on this line, in this direction."
+First: how do I know two rows are "about the same thing"? I use four fields together: `vehicleId`, `naptanId`, `lineId`, `direction`. In plain words, that's "which bus, at which stop, on which line, going which direction." A single bus can show up more than once in the same chunk of data (it might serve more than one line, or have predictions queued for more than one upcoming stop), so I need all four fields together to be sure I'm looking at the same real prediction, and not two different ones that just happen to share a bus number.
 
-The other decision was what to carry forward from bronze's two odder fields. `timeToLive`, the point after which a prediction should be considered stale, is already a clean `TIMESTAMP` in bronze, so it carries straight through since it's likely useful downstream. `timing`, TfL's internal diagnostic object with its own source/insert/read/sent/received sub-timestamps, gets dropped at this layer: it's upstream plumbing detail, not cleaned business data. Easy to add back later as a passthrough column if it turns out to matter.
+Second: what do I keep from bronze's two odder fields? `timeToLive` says "this prediction goes stale after this point", it's already a clean timestamp in bronze, and it's genuinely useful downstream, so it carries straight through. `timing` is TfL's own internal bookkeeping (when their system read it, sent it, received it, and so on), nobody downstream actually needs it, so I drop it at this layer. Easy to bring back later if it turns out someone does need it.
 
 Same per-layer-resources approach as bronze: a dedicated checkpoint volume, `tfl.silver.tfl_volume`, rather than reusing one from another schema, and catalog-managed storage with no explicit `LOCATION`.
 
@@ -91,7 +93,11 @@ TBLPROPERTIES (
 
 ## Reading bronze, cleaning, and de-duplicating
 
-Bronze's `timestamp`, `expectedArrival`, and `timeToLive` columns are already `TIMESTAMP`-typed there, since bronze casts them on the way in. So this step is mostly renaming and deriving, not re-parsing: `timestamp` becomes `event_ts`, bronze's own `ingest_ts` becomes `bronze_ingest_ts` to make room for silver's own fresh `ingest_ts`, and `event_date` gets derived for partitioning. The one real transform is `bearing`, which bronze stores as a raw string; a regex extracts the leading numeric part and casts it to `DOUBLE`.
+Bronze's `timestamp`, `expectedArrival`, and `timeToLive` columns are already `TIMESTAMP`-typed there, since bronze casts them on the way in. So most of this step is just renaming and deriving new columns, not re-parsing anything: `timestamp` becomes `event_ts`, bronze's own `ingest_ts` becomes `bronze_ingest_ts` (making room for silver's own fresh `ingest_ts`), and `event_date` gets derived from `event_ts` for partitioning.
+
+The one real fix here is `bearing`, the compass direction a bus is facing. Bronze stores it as plain text, like `"134.0"`, simply because that's how TfL happened to send it. Text isn't something you can sort or do maths on, so I pull out the numeric part with a regular expression and store it as an actual number.
+
+I also drop any row that's missing one of the four key fields, or missing `event_ts`. Without those, I wouldn't even be able to tell what bus, stop, line and direction the row is about, so there's nothing useful left to keep.
 
 ```python
 from pyspark.sql.functions import col, regexp_extract, current_timestamp, to_date
@@ -137,9 +143,13 @@ silver_candidates = (
 
 ## The `foreachBatch` upsert
 
-Delta doesn't support a plain streaming `MERGE`, so a streaming upsert needs `foreachBatch`: a function that runs once per micro-batch and does an ordinary batch `MERGE` against whatever rows arrived in that batch. Within each micro-batch, `row_number()` ranks rows by `(vehicleId, naptanId, lineId, direction)`, ordered by `event_ts` and then `bronze_ingest_ts`, both descending. Only the top-ranked row per key survives; that's the "latest per key" logic. The survivors get published as a global temp view, since a `%sql`-style `MERGE` statement needs something it can reference by name, then merged into the silver table.
+Here's the problem this section solves: normally, a Spark streaming job can only add new rows, it can't go back and update one that's already there. But updating existing rows is exactly what I need: if a newer prediction comes in for a bus/stop/line/direction I've already seen, I want to update that one row, not just pile another row on top of it.
 
-The `WHEN MATCHED` condition is what keeps this safe against out-of-order batches: a row only overwrites the existing one if its `event_ts` is genuinely newer, or ties on `event_ts` and wins on `bronze_ingest_ts`. Without that, a late-arriving batch with an older prediction could otherwise stomp on a newer one already sitting in the table.
+Delta's answer to this is `foreachBatch`. Instead of treating the stream as one continuous flow, Spark hands me small chunks of new data every few seconds, a "micro-batch", and for each chunk I get to run completely ordinary, one-off database commands, including the update-or-insert command called `MERGE` ("if this row already exists, update it; if not, add it as new").
+
+One wrinkle: even a single small chunk can contain more than one update for the same bus/stop/line/direction. So before running the `MERGE`, I sort each chunk with `row_number()`, ranked by `(vehicleId, naptanId, lineId, direction)` and then by whichever is newest (`event_ts`, with `bronze_ingest_ts` as a tiebreaker), and keep only the top-ranked row per key. Everything else in that chunk gets thrown away before it ever reaches the table, that's the "latest per key" logic. Because a `MERGE` statement needs something it can reference by name, I publish these survivors as a temporary named view first, then run the actual `MERGE` against it.
+
+There's one more safety net: what if an old, out-of-date update shows up a bit late, after a newer one has already been saved? Without a check, it would happily overwrite the newer, correct row with older data. The `WHEN MATCHED` condition below is that check: an update only goes through if it's genuinely newer than what's already in the table, or, in a tie, arrived later.
 
 ```python
 from pyspark.sql import Window
@@ -198,11 +208,20 @@ def upsert_latest_per_key(batch_df, batch_id: int):
 
 ## OCI Logging, briefly
 
-Each `foreachBatch` call also writes a line to OCI Logging (`log_to_oci()`, called above): batch id, row count, or the error if the `MERGE` failed. AIDP's notebooks don't expose a resource-principal token or standard OCI instance-metadata access, so neither of the two "automatic identity" mechanisms OCI normally offers worked here, and the Credential Store's Service account credential type can't be created from a currently logged-in user's own identity either. For this demo, the pragmatic fix was my own OCI API signing key, uploaded once into the workspace's own file storage and referenced by path. It ties the pipeline's logging permission to my personal identity rather than a proper scoped service account, which would be the right call for anything beyond a demo like this one, but it's more setup than this feature needed here.
+Every time this batch process runs, I want a simple trail I can check later: did it succeed, how many rows did it touch, did anything go wrong. That's all `log_to_oci()` does above, it writes one line per batch to OCI Logging with the batch id, the row count, or the error message if the `MERGE` failed.
 
-## Running the stream, verifying, and stopping it
+Getting the pipeline permission to actually write those logs turned out more fiddly than expected. Normally a notebook running on OCI can quietly prove "I'm allowed to be here" without any extra setup, but AIDP's notebooks don't expose either of the two usual automatic ways to do that, and the platform's own Credential Store refused to create a proper separate service identity from my own logged-in account. For this demo, my workaround was simple: I uploaded my own OCI API signing key into the workspace's file storage and pointed the logging code at it directly. That ties the pipeline's logging permission to my personal account rather than a proper, separate service identity, which is the right way to do it for anything beyond a demo, but it was more setup than this one feature needed here.
 
-Same manual, on-demand model as bronze: run the write cell when data should flow, stop it when done. The trigger interval is 5 seconds here rather than bronze's 2, since every micro-batch now also runs a `MERGE`, a heavier operation than a plain append.
+Once the pipeline actually ran, this held up: the `batch_id=0 action=merge rows=76447` line showed up as a real structured entry in the Log Explorer, not just a local print.
+
+<figure>
+  <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/silver-layer-spark-structured-streaming/images/silver-log-explorer.png" alt="OCI Logging Log Explorer showing the tfl-silver-app-logs entry with message batch_id=0 action=merge rows=76447, plus full compartment/log group/tenant metadata">
+  <figcaption>The same batch's log line, landed in tfl-silver-app-logs with real OCI metadata attached.</figcaption>
+</figure>
+
+## Running and stopping
+
+In short: I press play and the pipeline starts pulling data from bronze and updating the silver table every 5 seconds; when I'm done for the day, I press stop, the same two-step way as bronze. Same manual, on-demand model as before: run the write cell when data should flow, stop it when done. The trigger interval here is 5 seconds rather than bronze's 2, since every micro-batch now also runs a `MERGE`, which is heavier work than a plain append.
 
 ```python
 CHECKPOINT_PATH = "/Volumes/tfl/silver/tfl_volume/checkpoints/arrivals-silver"
@@ -239,6 +258,8 @@ query.stop()
 print(query.isActive)  # expect: False
 ```
 
+## Running the query notebook alongside it
+
 Verifying it worked meant two things. First, the ordinary checks:
 
 ```sql
@@ -260,7 +281,7 @@ LIMIT 20;
   <figcaption>76,447 rows landed from bronze's backlog in one batch, with a recent last_ingest timestamp.</figcaption>
 </figure>
 
-Second, and more specific to this layer: a dedup sanity check, run from the second observational notebook attached to the same cluster while the main job runs.
+Second, and more specific to this layer: a dedup sanity check. I ran this from a second, separate notebook attached to the same cluster, not the one actually streaming. That's on purpose: the main notebook's write-stream cell is busy running and blocking, so nothing else can execute there until I stop it. Rather than interrupt the real pipeline just to peek at the data, I open a second notebook side by side and query the table from there while the first one keeps running.
 
 ```sql
 %sql
@@ -270,12 +291,7 @@ GROUP BY vehicleId, naptanId, lineId, direction
 HAVING count(*) > 1;
 ```
 
-That query came back empty, confirming the latest-per-key logic held: every key in the table has exactly one row. OCI Logging held up too; the `batch_id=0 action=merge rows=76447` line showed up as a real structured entry in the Log Explorer, not just a local print.
-
-<figure>
-  <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/silver-layer-spark-structured-streaming/images/silver-log-explorer.png" alt="OCI Logging Log Explorer showing the tfl-silver-app-logs entry with message batch_id=0 action=merge rows=76447, plus full compartment/log group/tenant metadata">
-  <figcaption>The same batch's log line, landed in tfl-silver-app-logs with real OCI metadata attached.</figcaption>
-</figure>
+That query came back empty, confirming the latest-per-key logic held: every key in the table has exactly one row.
 
 ## What's next
 
