@@ -3,7 +3,7 @@
   <img alt="Illustration of a beaver at a desk running DBeaver against Oracle AI Data Platform, with tfl.bronze.arrivals_bronze and tfl.silver.arrivals_silver open side by side in the SQL editor, and Bronze and Silver Delta Lake barrels flowing toward real-time TfL insights" src="https://zigavaupot.github.io/blogger-ai-data-platform-series/comparing-bronze-and-silver-with-dbeaver/images/aidp-dbeaver.png">
 
   <div class="post-intro">
-    <p>This is a short detour in the AI Data Platform series, sitting between "Silver Layer: Spark Structured Streaming" (stage 3, link to be added once that post is live) and the upcoming gold layer post. Every table in this series so far has only ever been queried from inside an AIDP Workbench notebook. This time I wanted to connect a plain SQL client, DBeaver, straight to the cluster over JDBC, and use it to look at bronze and silver side by side: same underlying event, two very different shapes. Along the way, DBeaver's own table-metadata commands surfaced something I'd walked past without really registering back in the bronze post: both tables are already readable as Apache Iceberg tables, no extra work required.</p>
+    <p>This is a short detour in the AI Data Platform series, sitting between <a href="https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-silver-layer.html">Silver Layer: Spark Structured Streaming</a> (stage 3) and the upcoming gold layer post. Every table in this series so far has only ever been queried from inside an AIDP Workbench notebook. This time I wanted to connect a plain SQL client, DBeaver, straight to the cluster over JDBC, and use it to look at bronze and silver side by side: same underlying event, two very different shapes. Along the way, DBeaver's own table-metadata commands surfaced something I'd walked past without really registering back in the bronze post: both tables are already readable as Apache Iceberg tables, no extra work required.</p>
   </div>
 
   <!--more-->
@@ -236,6 +236,6 @@ WHERE vehicleId IS NULL OR naptanId IS NULL OR lineId IS NULL OR direction IS NU
 
   <p>Back to the main pipeline for the next post: the <strong>gold layer</strong>, aggregating silver into something Oracle Analytics Cloud can query directly. This detour was worth the friction, though; seeing the actual bytes in bronze and silver side by side, rather than only reading the code that produces them, is a good habit to keep around.</p>
 
-  <p><em>Related: <a href="https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html">Just Streams: Real-Time Data Pipelines on OCI</a> (series intro), <a href="https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-bronze-layer.html">Bronze Layer: Spark Structured Streaming</a>, Silver Layer: Spark Structured Streaming (link to be added once published)</em></p>
+  <p><em>Related: <a href="https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html">Just Streams: Real-Time Data Pipelines on OCI</a> (series intro), <a href="https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-bronze-layer.html">Bronze Layer: Spark Structured Streaming</a>, <a href="https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-silver-layer.html">Silver Layer: Spark Structured Streaming</a></em></p>
 
 </article>

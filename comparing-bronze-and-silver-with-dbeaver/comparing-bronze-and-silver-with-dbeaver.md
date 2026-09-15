@@ -2,7 +2,7 @@
 
 # Comparing Bronze and Silver with DBeaver (An AI Data Platform Series Interlude)
 
-*This is a short detour in the AI Data Platform series, sitting between "Silver Layer: Spark Structured Streaming" (stage 3, link to be added once that post is live) and the upcoming gold layer post. Every table in this series so far has only ever been queried from inside an AIDP Workbench notebook. This time I wanted to connect a plain SQL client, DBeaver, straight to the cluster over JDBC, and use it to look at bronze and silver side by side: same underlying event, two very different shapes. Along the way, DBeaver's own table-metadata commands surfaced something I'd walked past without really registering back in the bronze post: both tables are already readable as Apache Iceberg tables, no extra work required.*
+*This is a short detour in the AI Data Platform series, sitting between [Silver Layer: Spark Structured Streaming](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-silver-layer.html) (stage 3) and the upcoming gold layer post. Every table in this series so far has only ever been queried from inside an AIDP Workbench notebook. This time I wanted to connect a plain SQL client, DBeaver, straight to the cluster over JDBC, and use it to look at bronze and silver side by side: same underlying event, two very different shapes. Along the way, DBeaver's own table-metadata commands surfaced something I'd walked past without really registering back in the bronze post: both tables are already readable as Apache Iceberg tables, no extra work required.*
 
 In this post I'll walk through:
 
@@ -262,4 +262,4 @@ That last point is what actually connects back to this table. UniForm's Iceberg 
 
 Back to the main pipeline for the next post: the **gold layer**, aggregating silver into something Oracle Analytics Cloud can query directly. This detour was worth the friction, though; seeing the actual bytes in bronze and silver side by side, rather than only reading the code that produces them, is a good habit to keep around.
 
-*Related: [Just Streams: Real-Time Data Pipelines on OCI](https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html) (series intro), [Bronze Layer: Spark Structured Streaming](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-bronze-layer.html), Silver Layer: Spark Structured Streaming (link to be added once published)*
+*Related: [Just Streams: Real-Time Data Pipelines on OCI](https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html) (series intro), [Bronze Layer: Spark Structured Streaming](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-bronze-layer.html), [Silver Layer: Spark Structured Streaming](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-silver-layer.html)*

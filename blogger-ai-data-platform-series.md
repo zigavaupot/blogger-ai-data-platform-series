@@ -17,3 +17,6 @@ This is summary blog post with references to posts published under **AI Data Pla
 
 ![Silver Layer: Spark Structured Streaming](https://zigavaupot.github.io/blogger-ai-data-platform-series/silver-layer-spark-structured-streaming/images/silver-layer.png)
 [Silver Layer: Spark Structured Streaming](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-silver-layer.html)
+
+![Comparing Bronze and Silver with DBeaver](https://zigavaupot.github.io/blogger-ai-data-platform-series/comparing-bronze-and-silver-with-dbeaver/images/aidp-dbeaver.png)
+[Comparing Bronze and Silver with DBeaver](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-bronze-vs-silver.html)
