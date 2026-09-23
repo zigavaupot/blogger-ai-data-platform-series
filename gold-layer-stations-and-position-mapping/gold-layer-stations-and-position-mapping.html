@@ -1,0 +1,383 @@
+<article class="zv-blog-post">
+
+  <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/gold-layer-stations-and-position-mapping/images/gold-layer-stations-and-positions.png" alt="Gold Layer: stations reference data and live bus positions for line 25, interpolated along TfL&#x27;s own route geometry and shown on an Oracle Analytics Cloud map">
+
+  <div class="post-intro">
+    <p>This is the seventh post in the AI Data Platform series. The <a href="https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-gold-layer-arrivals-board.html">previous post</a> built <code>tfl.gold.arrivals_board</code>, a live view of the next buses at every stop, and connected it to Oracle Analytics Cloud. What it couldn't do was say <em>where</em> anything is: TfL's arrivals feed carries stop IDs and names, but no coordinates. This post adds them. First a reference table with the location of every stop on every bus line, then an estimate of where each bus on line 25 actually is right now, drawn along the real road it drives on.</p>
+  </div>
+
+  <!--more-->
+
+  <p>In this post I'll walk through:</p>
+
+  <ul>
+  <li><strong>A stations table from TfL's own API</strong>: every stop on all 674 bus lines, with coordinates, and proof that it joins cleanly to the arrivals board.</li>
+  <li><strong>A free extra in the same API response</strong>: TfL's own route geometry, the line a bus actually drives along.</li>
+  <li><strong>Where is the bus?</strong>: why silver already holds each bus's stop-by-stop history, and how a plain SQL view turns that into "40% of the way from stop A to stop B".</li>
+  <li><strong>Three real problems</strong>: stale rows after a pause, a column-name case surprise, and TfL using two different ID systems for the same stops.</li>
+  <li><strong>Running it on a clock and putting it on a map</strong>: live bus positions in OAC, next to the route's stops.</li>
+  </ul>
+
+  <h2>Recap: a map that only knew station names</h2>
+
+  <p>At the end of the last post, the OAC workbook had a map, but it placed arrivals by <em>station name</em>, using a stop list downloaded from TfL's open data hub. That was good enough to pick a bus station, but every stop called "London Bridge Bus Station" landed on the same point, and nothing could show a bus between stops.</p>
+
+  <p>To do better I needed two things: real coordinates for every individual stop, keyed by the same <code>naptanId</code> the arrivals board uses, and a way to estimate a moving bus's position from data that only ever says "this bus is expected at stop X at time T".</p>
+
+  <h2>Part 1: the stations table</h2>
+
+  <h3>Credentials, reused</h3>
+
+  <p>TfL's reference data (lines, routes, stops) comes from the same Unified API as the live arrivals, so I didn't need a new registration. The stream producer from <a href="https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-oci-streaming.html">stage 1</a> already has an app key. I added that same key to AIDP's Credential Store as a new secret, <code>tfl_reference_api</code>, so the notebook reads it the same way bronze and silver read the Kafka credentials, rather than having it pasted into a cell.</p>
+
+  <figure>
+    <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/gold-layer-stations-and-position-mapping/images/gold-stations-credential-create.png" alt="AIDP Create credential form: name tfl_reference_api, credential type Secret token, key TFL_APP_KEY with a masked value">
+    <figcaption>The TfL app key stored as a Secret token in the Credential Store.</figcaption>
+  </figure>
+
+<pre><code>TFL_APP_KEY = aidputils.secrets.get(name=&quot;tfl_reference_api&quot;, key=&quot;TFL_APP_KEY&quot;)
+print(f&quot;Key loaded, length={len(TFL_APP_KEY)}&quot;)  # never print the key itself
+</code></pre>
+
+  <h3>Can the cluster reach the internet?</h3>
+
+  <p>This was the one real unknown going in. Until now, every notebook in this series only talked to OCI Streaming, inside OCI. This is the first time a cluster notebook calls a public internet API, <code>api.tfl.gov.uk</code>, and I didn't know whether <code>tfl_cluster</code>'s network allowed that.</p>
+
+  <p>So before building anything, I made one cheap call that doesn't even need the key:</p>
+
+<pre><code>import requests
+
+resp = requests.get(&quot;https://api.tfl.gov.uk/Line/Meta/Modes&quot;, timeout=15)
+print(resp.status_code)
+print(resp.json()[:5])
+</code></pre>
+
+  <figure>
+    <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/gold-layer-stations-and-position-mapping/images/gold-stations-connectivity-check.png" alt="gold_stations.ipynb: key loaded with length 32, then a request to api.tfl.gov.uk/Line/Meta/Modes returning status 200 and a list of transport modes">
+    <figcaption>Status 200: outbound internet access from tfl_cluster works without any network changes.</figcaption>
+  </figure>
+
+  <p>A 200 and a list of transport modes. No network changes needed.</p>
+
+  <h3>Every line, every stop</h3>
+
+  <p>The build has two steps. <code>GET /Line/Mode/bus</code> returns every bus line TfL runs, 674 of them. Then, for each line and each direction, <code>GET /Line/{id}/Route/Sequence/{direction}</code> returns the route, including a <code>stations</code> array with each stop's ID, name, latitude and longitude.</p>
+
+  <figure>
+    <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/gold-layer-stations-and-position-mapping/images/gold-stations-bus-lines.png" alt="Request to /Line/Mode/bus returning 674 bus lines">
+    <figcaption>674 bus lines.</figcaption>
+  </figure>
+
+  <p>That's about 1,350 API calls, so the loop is paced to stay under the key's rate limit (500 requests a minute), with a simple retry if TfL answers with HTTP 429 (too many requests):</p>
+
+<pre><code>import time
+
+DIRECTIONS = [&quot;outbound&quot;, &quot;inbound&quot;]
+REQUEST_DELAY_SEC = 0.15  # ~400/min ceiling, under the 500/min product limit
+MAX_RETRIES = 3
+
+rows = []
+skipped = []
+
+for i, line in enumerate(bus_lines):
+    line_id = line[&quot;id&quot;]
+    line_name = line.get(&quot;name&quot;, line_id)
+
+    for direction in DIRECTIONS:
+        url = f&quot;https://api.tfl.gov.uk/Line/{line_id}/Route/Sequence/{direction}&quot;
+        attempt = 0
+        while True:
+            attempt += 1
+            resp = requests.get(url, params={&quot;app_key&quot;: TFL_APP_KEY}, timeout=30)
+            if resp.status_code == 429 and attempt &lt;= MAX_RETRIES:
+                time.sleep(2 * attempt)  # back off and retry
+                continue
+            break
+
+        if resp.status_code != 200:
+            skipped.append((line_id, direction, resp.status_code))
+            time.sleep(REQUEST_DELAY_SEC)
+            continue
+
+        data = resp.json()
+        for stop in data.get(&quot;stations&quot;, []):
+            rows.append({
+                &quot;naptan_id&quot;: stop.get(&quot;id&quot;),
+                &quot;station_name&quot;: stop.get(&quot;name&quot;),
+                &quot;direction&quot;: direction,
+                &quot;line_id&quot;: line_id,
+                &quot;line_name&quot;: line_name,
+                &quot;lat&quot;: stop.get(&quot;lat&quot;),
+                &quot;lon&quot;: stop.get(&quot;lon&quot;),
+            })
+
+        time.sleep(REQUEST_DELAY_SEC)
+
+    if (i + 1) % 50 == 0:
+        print(f&quot;{i + 1}/{len(bus_lines)} lines done, {len(rows)} rows so far, {len(skipped)} skipped&quot;)
+
+print(f&quot;Done: {len(bus_lines)} lines, {len(rows)} raw rows, {len(skipped)} line/direction combos skipped&quot;)
+</code></pre>
+
+  <figure>
+    <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/gold-layer-stations-and-position-mapping/images/gold-stations-fetch-progress.png" alt="The fetch loop finished after 27 minutes 9 seconds: 674 lines, 55,419 raw rows, 0 line/direction combinations skipped">
+    <figcaption>27 minutes, 674 lines, 55,419 rows, nothing skipped.</figcaption>
+  </figure>
+
+  <p>It took 27 minutes, and nothing failed. I'd expected a few skips from lines that only run in one direction, but TfL answered every request.</p>
+
+  <p>The result lands as a plain catalog-managed table, fully overwritten on each run. This is reference data, not history, so there's nothing to merge.</p>
+
+<pre><code>from pyspark.sql import Row
+from pyspark.sql.functions import current_timestamp
+
+GOLD_TABLE = &quot;tfl.gold.stations&quot;
+
+stations_df = (
+    spark.createDataFrame([Row(**r) for r in rows])
+    .dropDuplicates([&quot;naptan_id&quot;, &quot;line_id&quot;, &quot;direction&quot;])
+    .withColumn(&quot;updated_at&quot;, current_timestamp())
+)
+
+stations_df.write.mode(&quot;overwrite&quot;).saveAsTable(GOLD_TABLE)
+</code></pre>
+
+  <h3>Does it join?</h3>
+
+  <p>A row count proves very little here. If the stations table's IDs were formatted even slightly differently from the arrivals board's (zero-padded, say), the table would look perfectly fine and still match nothing. So besides the basic counts, I joined the two tables directly and sorted by the number of matches, lowest first, so any stop on the live board without coordinates would appear at the top.</p>
+
+<pre><code>%sql
+SELECT
+  b.naptanid,
+  b.stationname,
+  s.lat,
+  s.lon,
+  count(*) AS stations_rows_matched
+FROM tfl.gold.arrivals_board b
+LEFT JOIN tfl.gold.stations s
+  ON s.naptan_id = b.naptanid
+GROUP BY b.naptanid, b.stationname, s.lat, s.lon
+ORDER BY stations_rows_matched ASC
+LIMIT 30;
+</code></pre>
+
+  <figure>
+    <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/gold-layer-stations-and-position-mapping/images/gold-stations-verify.png" alt="Verification cells: DESCRIBE TABLE tfl.gold.stations; counts of 55,419 total rows, 12,547 distinct stops, 674 distinct lines and 0 missing coordinates; and the join against arrivals_board where the lowest match count is 1, with real coordinates">
+    <figcaption>55,419 rows, 12,547 distinct stops, 674 lines, no missing coordinates, and the worst join match is still 1.</figcaption>
+  </figure>
+
+  <p>55,419 rows, 12,547 distinct physical stops, all 674 lines, zero missing coordinates. The join is the part I care about: even the least-matched stop on the live board finds a row with real coordinates. Every stop the arrivals board knows about can now be placed on a map precisely.</p>
+
+  <h3>The free extra: route geometry</h3>
+
+  <p>While looking at the <code>Route/Sequence</code> response, I noticed it has another field besides <code>stations</code>: <code>lineStrings</code>. It's TfL's own route geometry, a list of coordinates tracing the road the bus actually drives along, not just the stops.</p>
+
+  <p>That changed the plan for the second half. The July version of this demo had to build route lines itself, by joining stops with straight lines. Here, TfL provides the real path.</p>
+
+  <h2>Part 2: where is the bus?</h2>
+
+  <h3>Line 25 first</h3>
+
+  <p>For bus positions I deliberately started with a single line: <strong>line 25</strong>, which runs from the City out east through Stratford to Ilford. It's the same line the July demo used, which makes a direct before-and-after comparison possible, and it keeps the first version small enough to check by eye. Scaling to every line is a separate decision for later.</p>
+
+  <h3>The discovery: silver already has the history</h3>
+
+  <p>TfL's live feed never says where a bus <em>is</em>. It only says "vehicle X is expected at stop Y at time T". To place a bus between two stops, I need its previous stop and its next stop, and when it was expected at each.</p>
+
+  <p>The July demo kept that history itself, in a Python dictionary on the driver, updated batch by batch. It worked, but it's exactly the kind of in-memory state that is lost on every restart.</p>
+
+  <p>Then I looked again at how silver is keyed: one row per <code>(vehicleId, naptanId, lineId, direction)</code>. When a bus's predicted <em>next</em> stop changes, that's a <em>different</em> key, so silver doesn't overwrite the old row, it adds a new one. Silver has been quietly keeping every bus's stop-by-stop history since the day it started. All I have to do is read it in order.</p>
+
+  <p>That makes "where is the bus" a SQL view, using <code>LAG</code> to look at each vehicle's previous row:</p>
+
+<pre><code>%sql
+CREATE OR REPLACE VIEW tfl.gold.vehicle_segment_progress AS
+WITH history AS (
+  SELECT vehicleId, direction, naptanId, expectedArrival, event_ts,
+    LAG(naptanId) OVER (PARTITION BY vehicleId ORDER BY event_ts) AS prev_naptanId,
+    LAG(expectedArrival) OVER (PARTITION BY vehicleId ORDER BY event_ts) AS prev_expectedArrival
+  FROM tfl.silver.arrivals_silver WHERE lineId = '25'
+),
+latest_per_vehicle AS (
+  SELECT *, ROW_NUMBER() OVER (PARTITION BY vehicleId ORDER BY event_ts DESC) AS rn
+  FROM history
+  WHERE prev_naptanId IS NOT NULL AND expectedArrival &gt; prev_expectedArrival
+)
+SELECT vehicleId, direction, prev_naptanId AS from_naptan_id, naptanId AS to_naptan_id,
+  prev_expectedArrival AS segment_start, expectedArrival AS segment_end,
+  LEAST(1.0, GREATEST(0.0,
+    (CAST(current_timestamp() AS DOUBLE) - CAST(prev_expectedArrival AS DOUBLE))
+    / (CAST(expectedArrival AS DOUBLE) - CAST(prev_expectedArrival AS DOUBLE))
+  )) AS progress
+FROM latest_per_vehicle
+WHERE rn = 1
+  AND event_ts &gt; current_timestamp() - INTERVAL 30 MINUTES;
+</code></pre>
+
+  <p>For each bus, the view takes its latest pair of stops (<code>from_naptan_id</code> and <code>to_naptan_id</code>) and the times it was expected at each, and works out how far through that time window we are right now: <code>progress</code>, between 0 and 1. A bus expected at stop A at 10:00 and at stop B at 10:04 is, at 10:01, about a quarter of the way along. Like the arrivals board, it's recomputed on every query.</p>
+
+  <p>(The last line, the 30-minute filter, wasn't in the first version. More on that below.)</p>
+
+  <h3>From "25% of the way" to a point on the map</h3>
+
+  <p><code>progress</code> is a fraction of <em>time</em>. To turn it into a place, I need the road between the two stops. That's where <code>lineStrings</code> comes in.</p>
+
+  <p>For line 25, TfL's geometry has 247 points outbound and 237 inbound. One detail to watch for: TfL gives coordinates as <code>[longitude, latitude]</code>, the opposite of the order most people (and the stations table) use, so the notebook swaps them on the way in.</p>
+
+  <figure>
+    <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/gold-layer-stations-and-position-mapping/images/gold-positions-linestrings.png" alt="Fetching line 25's lineStrings for both directions: outbound 247 polyline points, inbound 237 polyline points">
+    <figcaption>Line 25's route geometry: 247 points outbound, 237 inbound.</figcaption>
+  </figure>
+
+  <p>Next, each of line 25's stops is matched to its nearest point on that line, which also gives its distance from the start of the route. Sorting stops by that distance gives their order along the route, and every pair of neighbouring stops becomes a <em>segment</em>: the slice of road between them, with its length in metres. The segments are stored in <code>tfl.gold.line_segments</code>.</p>
+
+  <figure>
+    <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/gold-layer-stations-and-position-mapping/images/gold-positions-segments-build.png" alt="The segment-building cell: haversine distance, cumulative distance along the route, nearest route point per stop; output 95 segments built across 2 directions and 0 stops matched more than 150 m from the nearest route point">
+    <figcaption>95 segments across both directions, and no stop further than 150 m from the route line.</figcaption>
+  </figure>
+
+  <p>One simplification I'm aware of: each stop is matched to the nearest <em>point</em> on the route line, not the nearest spot anywhere along it. With TfL's points only a few tens of metres apart that's fine, but the notebook still flags any stop matched more than 150 m away, rather than trusting it blindly. For line 25 there were none.</p>
+
+  <p>The last step walks along a segment's road until it has covered <code>progress</code> of the segment's length, and that point is the bus's estimated position. If a bus's stop pair doesn't match any segment, the notebook falls back to a straight line between the two stops and flags it, rather than dropping the bus.</p>
+
+  <h2>Three problems on the way</h2>
+
+  <p>The design above is how it ended up. Getting there took three fixes, and each one taught me something about the data.</p>
+
+  <h3>1. Everyone at progress 1, and rows from last week</h3>
+
+  <p>The first run of the progress view came back with <code>progress = 1</code> for every bus: every one of them apparently sitting at its next stop. Scrolling down gave the reason away, a row from <strong>September 13</strong>.</p>
+
+  <figure>
+    <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/gold-layer-stations-and-position-mapping/images/gold-positions-progress-stale.png" alt="vehicle_segment_progress output where every row has progress 1, with a partially visible row from 2026-09-13 at the bottom">
+    <figcaption>Every bus at progress 1, and a September 13 row sneaking in at the bottom.</figcaption>
+  </figure>
+
+  <p>Bronze and silver had been stopped for about a week before this session. When I restarted them, they had a backlog of about 1,000 seconds to catch up on, and meanwhile silver still held rows for buses last seen before the pause. For those, "now" was days after their last expected arrival, so <code>progress</code> was capped at 1. Buses currently on the road were caught by the same issue until the streams caught up.</p>
+
+  <p>Two fixes. The real one was patience: let bronze and silver catch up to real time. The permanent one was the 30-minute filter at the end of the view: only consider buses that silver has heard about in the last half hour. After both, <code>progress</code> started to look like progress:</p>
+
+  <figure>
+    <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/gold-layer-stations-and-position-mapping/images/gold-positions-progress-live.png" alt="vehicle_segment_progress after the recency filter: current timestamps, and SK20AXY with progress 0.144">
+    <figcaption>After the fix: current data only, and a bus 14% of the way between two stops.</figcaption>
+  </figure>
+
+  <p>A side note on watching that catch-up. My first reflex was to check <code>spark.streams.active</code> from the gold notebook, which showed nothing. That's expected: every notebook is its own Spark session, even on a shared cluster, so it only sees its own streams. The place to watch another notebook's stream is the cluster's Spark UI, on the streaming query statistics page, where the input rate and processing rate charts show the backlog draining.</p>
+
+  <h3>2. <code>vehicleId</code> became <code>vehicleid</code></h3>
+
+  <p>The view defines the column as <code>vehicleId</code>. When Python read it back through pandas, <code>row["vehicleId"]</code> failed: the metastore stores view column names in lowercase, whatever case the <code>SELECT</code> uses. You can see it in the OAC dataset from the last post too. In SQL that's invisible, because SQL isn't case-sensitive about names. Python dictionaries are. The fix is one defensive line:</p>
+
+<pre><code>vehicle_id = row.get(&quot;vehicleId&quot;, row.get(&quot;vehicleid&quot;))
+</code></pre>
+
+  <h3>3. Two ID systems for the same stop</h3>
+
+  <p>This was the interesting one. After the first two fixes, the interpolation still couldn't match a single bus to a segment: 0 out of 30.</p>
+
+  <p>The reason: for 49 of line 25's 97 stops, TfL's <code>Route/Sequence</code> response doesn't return the individual stop ID, it returns a <em>stop area</em> ID, a group that covers several stops at the same location. They're easy to recognise, they start with <code>490G</code>. The live arrivals feed, on the other hand, always uses the individual stop ID. Same physical place, two different IDs, so the segments (built from <code>Route/Sequence</code>) and the buses (from arrivals) never matched.</p>
+
+  <p>The fix was to ask TfL which individual stops belong to each group. <code>GET /StopPoint/{id}</code> for a <code>490G...</code> ID lists its <code>children</code>, and I built a lookup from each child back to its group:</p>
+
+<pre><code>group_ids = stops_pd.loc[stops_pd[&quot;naptan_id&quot;].str.startswith(&quot;490G&quot;), &quot;naptan_id&quot;].unique().tolist()
+print(f&quot;{len(group_ids)} StopArea-style IDs found among line 25 stops&quot;)
+
+child_to_parent = {}
+for group_id in group_ids:
+    resp = requests.get(f&quot;https://api.tfl.gov.uk/StopPoint/{group_id}&quot;,
+                        params={&quot;app_key&quot;: TFL_APP_KEY}, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+    children = data.get(&quot;children&quot;, [])
+    for child in children:
+        child_id = child.get(&quot;naptanId&quot;) or child.get(&quot;id&quot;)
+        if child_id:
+            child_to_parent[child_id] = group_id
+    print(f&quot;  {group_id} ({data.get('commonName')}): {len(children)} children&quot;)
+
+print(f&quot;{len(child_to_parent)} individual stop IDs resolved back to their group parent&quot;)
+
+def resolve_id(naptan_id):
+    return child_to_parent.get(naptan_id, naptan_id)
+</code></pre>
+
+  <figure>
+    <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/gold-layer-stations-and-position-mapping/images/gold-positions-stoparea-resolve.png" alt="The stop area resolution cell listing 490G group IDs such as Bow Church (3 children) and Hainault Street (4 children), ending with 82 individual stop IDs resolved back to their group parent">
+    <figcaption>49 stop areas on line 25 resolve to 82 individual stops.</figcaption>
+  </figure>
+
+  <p>Before looking up a segment, both of a bus's stop IDs go through <code>resolve_id</code>, so both sides speak the same ID system.</p>
+
+  <p>Interestingly, this didn't show up in the stations join in Part 1. That join only asks whether each stop on the arrivals board exists <em>somewhere</em> in the stations table, and every one did. The mismatch only appears when a single line's route, and the order of its stops, matters.</p>
+
+  <h2>The result</h2>
+
+  <p>With all three fixes, the interpolation cell produced positions for 25 of the 30 buses on line 25:</p>
+
+  <figure>
+    <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/gold-layer-stations-and-position-mapping/images/gold-positions-interpolate.png" alt="The interpolation cell: resolve_id on both stops, segment lookup, interpolate_along_polyline or straight-line fallback; output 25 vehicle positions computed, 17 used the straight-line fallback, 5 skipped with unresolvable stops listed">
+    <figcaption>25 positions: 8 along the real road, 17 on the straight-line fallback, 5 skipped.</figcaption>
+  </figure>
+
+  <p>To be clear about the quality: only 8 of those 25 follow the actual road. The other 17 used the straight-line fallback, mostly on segments next to a stop area, where the group-based segments and the individual stops don't line up perfectly. Five buses were skipped because one of their stops couldn't be resolved at all, possibly a stop area nested more than one level deep. At the zoom level of a city map, straight-line positions between two neighbouring stops are close enough, so I've documented this as a known limitation rather than chasing it further for now.</p>
+
+  <figure>
+    <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/gold-layer-stations-and-position-mapping/images/gold-positions-table.png" alt="SELECT from tfl.gold.vehicle_positions: line 25 vehicles with direction, from and to stop IDs, progress, lat, lon and the fallback flag">
+    <figcaption>tfl.gold.vehicle_positions: one row per bus, with coordinates and a fallback flag.</figcaption>
+  </figure>
+
+  <p>The real test is whether the buses move. I re-ran the calculation about seven minutes later and compared: <strong>24 of the 25 buses</strong> had moved, to new segments, new coordinates, with <code>progress</code> advancing. A couple had even flipped direction at the end of the route, which is exactly what a bus does at a terminus. The one that hadn't moved simply hadn't received a new prediction in that window.</p>
+
+  <h2>Running it on a clock</h2>
+
+  <p>Re-running cells by hand proves the logic, but a map needs positions that update by themselves. The walk along the road is Python, so this can't be a view like the arrivals board. Instead, I wrapped the same calculation in the pattern I'd kept as the arrivals board's fallback: a <code>rate</code> stream, used purely as a clock, with <code>foreachBatch</code> recomputing and overwriting <code>tfl.gold.vehicle_positions</code> every 30 seconds.</p>
+
+<pre><code>query = (
+    spark.readStream.format(&quot;rate&quot;).option(&quot;rowsPerSecond&quot;, 1).load()
+    .writeStream
+    .foreachBatch(refresh_vehicle_positions)
+    .option(&quot;checkpointLocation&quot;, &quot;/Volumes/tfl/gold/tfl_volume/checkpoints/vehicle-positions&quot;)
+    .trigger(processingTime=&quot;30 seconds&quot;)
+    .start()
+)
+</code></pre>
+
+  <figure>
+    <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/gold-layer-stations-and-position-mapping/images/gold-positions-continuous.png" alt="The continuous version: refresh_vehicle_positions function wrapped in a rate-source writeStream with foreachBatch, checkpoint on tfl.gold.tfl_volume and a 30 second trigger; output batch 0 wrote 28 positions (18 fallback, 1 skipped)">
+    <figcaption>The same calculation on a 30-second clock. First batch: 28 positions.</figcaption>
+  </figure>
+
+  <p>One gotcha: my first version had no <code>checkpointLocation</code>. It didn't fail. <code>.start()</code> just never returned, and the cell sat there running. Adding a checkpoint fixed it, on <code>tfl.gold.tfl_volume</code>, a volume I created back in stage 0 and hadn't needed until now.</p>
+
+  <h2>Buses on the map</h2>
+
+  <p>In OAC, <code>vehicle_positions</code> shows up under <code>gold</code> like any other table, next to <code>stations</code>, <code>line_segments</code>, and the two views.</p>
+
+  <figure>
+    <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/gold-layer-stations-and-position-mapping/images/gold-oac-positions-dataset.png" alt="OAC dataset tfl - vehicle positions: the gold schema lists arrivals_board, line_segments, stations, vehicle_positions and vehicle_segment_progress; the data shows line 25 vehicles with progress, latitude, longitude and the fallback flag">
+    <figcaption>The vehicle_positions dataset in OAC. Note both views are listed here, unlike the AIDP catalog browser.</figcaption>
+  </figure>
+
+  <p>Unlike the arrivals board map, no custom map layer is needed this time. Latitude and longitude are real columns, so OAC places the buses directly. I coloured them by direction, with the vehicle ID as a label.</p>
+
+  <figure>
+    <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/gold-layer-stations-and-position-mapping/images/gold-oac-positions-map-edit.png" alt="OAC workbook Bus Positions - Line 25 in edit mode: map with Latitude and Longitude as location, Direction as colour and Vehicle ID as tooltip; buses spread from the City to Ilford">
+    <figcaption>Buses on line 25, placed by their interpolated latitude and longitude.</figcaption>
+  </figure>
+
+  <p>Adding a second layer from the stations table, filtered to line 25, draws the route's stops underneath the buses. That makes it easy to see that the buses really are on the route, between the stops, rather than scattered around east London.</p>
+
+  <figure>
+    <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/gold-layer-stations-and-position-mapping/images/gold-oac-positions-stations-map.png" alt="OAC map of line 25: route stops from tfl.gold.stations as small points with names, and buses as larger orange (outbound) and dark (inbound) points along the route from Bank to Ilford">
+    <figcaption>Line 25: the route's stops from tfl.gold.stations, and the buses between them.</figcaption>
+  </figure>
+
+  <h2>What's next</h2>
+
+  <p>The gold layer now has three live pieces: the arrivals board, a stations reference table covering all of London's bus stops, and live positions for line 25. All of them are queryable from OAC.</p>
+
+  <p>Scaling positions to every line is still open. The stop area problem and the nearest-point matching would both need another look at that scale. But for now, I want to try something different with what's already there. So far, every question I've asked this data has been SQL in a notebook or a workbook in OAC. In the next post, I'll connect Claude to Oracle Analytics Cloud through OAC's MCP server and simply <em>ask</em> about the live data in plain language.</p>
+
+  <p><em>Related: <a href="https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html">Just Streams: Real-Time Data Pipelines on OCI</a> (series intro), <a href="https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-silver-layer.html">Silver Layer: Spark Structured Streaming</a>, <a href="https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-gold-layer-arrivals-board.html">Gold Layer: The Arrivals Board and Oracle Analytics Cloud</a></em></p>
+
+</article>
