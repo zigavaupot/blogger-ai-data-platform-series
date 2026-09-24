@@ -20,3 +20,12 @@ This is summary blog post with references to posts published under **AI Data Pla
 
 ![Comparing Bronze and Silver with DBeaver](https://zigavaupot.github.io/blogger-ai-data-platform-series/comparing-bronze-and-silver-with-dbeaver/images/aidp-dbeaver.png)
 [Comparing Bronze and Silver with DBeaver](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-bronze-vs-silver.html)
+
+![Gold Layer: Arrivals Board](https://zigavaupot.github.io/blogger-ai-data-platform-series/gold-layer-arrivals-board-and-oac/images/gold-layer-arrivals-board.png)
+[Gold Layer: Arrivals Board](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-gold-layer.html)
+
+![Gold Layer: Vehicle Movements](https://zigavaupot.github.io/blogger-ai-data-platform-series/gold-layer-stations-and-position-mapping/images/gold-layer-stations-and-positions.png)
+[Gold Layer: Vehicle Movements](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-gold-layermovements.html)
+
+![OAC MCP Server and Streaming Data](https://zigavaupot.github.io/blogger-ai-data-platform-series/oac-mcp-server-and-aidp-streams/images/oac-mcp-server-and-aidp-streams.png)
+[OAC MCP Server and Streaming Data](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-oac-mcp-server.html)

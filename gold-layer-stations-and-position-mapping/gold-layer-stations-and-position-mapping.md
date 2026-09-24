@@ -2,7 +2,7 @@
 
 # Gold Layer: Stations and Live Bus Positions (Part 7 of the AI Data Platform Series)
 
-*This is the seventh post in the AI Data Platform series. The [previous post](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-gold-layer-arrivals-board.html) built `tfl.gold.arrivals_board`, a live view of the next buses at every stop, and connected it to Oracle Analytics Cloud. What it couldn't do was say *where* anything is: TfL's arrivals feed carries stop IDs and names, but no coordinates. This post adds them. First a reference table with the location of every stop on every bus line, then an estimate of where each bus on line 25 actually is right now, drawn along the real road it drives on.*
+*This is the seventh post in the AI Data Platform series. The [previous post](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-gold-layer.html) built `tfl.gold.arrivals_board`, a live view of the next buses at every stop, and connected it to Oracle Analytics Cloud. What it couldn't do was say *where* anything is: TfL's arrivals feed carries stop IDs and names, but no coordinates. This post adds them. First a reference table with the location of every stop on every bus line, then an estimate of where each bus on line 25 actually is right now, drawn along the real road it drives on.*
 
 In this post I'll walk through:
 
@@ -381,4 +381,4 @@ The gold layer now has three live pieces: the arrivals board, a stations referen
 
 Scaling positions to every line is still open. The stop area problem and the nearest-point matching would both need another look at that scale. But for now, I want to try something different with what's already there. So far, every question I've asked this data has been SQL in a notebook or a workbook in OAC. In the next post, I'll connect Claude to Oracle Analytics Cloud through OAC's MCP server and simply *ask* about the live data in plain language.
 
-*Related: [Just Streams: Real-Time Data Pipelines on OCI](https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html) (series intro), [Silver Layer: Spark Structured Streaming](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-silver-layer.html), [Gold Layer: The Arrivals Board and Oracle Analytics Cloud](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-gold-layer-arrivals-board.html)*
+*Related: [Just Streams: Real-Time Data Pipelines on OCI](https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html) (series intro), [Silver Layer: Spark Structured Streaming](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-silver-layer.html), [Gold Layer: The Arrivals Board and Oracle Analytics Cloud](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-gold-layer.html)*

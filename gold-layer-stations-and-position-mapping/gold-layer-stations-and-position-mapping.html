@@ -3,7 +3,7 @@
   <img src="https://zigavaupot.github.io/blogger-ai-data-platform-series/gold-layer-stations-and-position-mapping/images/gold-layer-stations-and-positions.png" alt="Gold Layer: stations reference data and live bus positions for line 25, interpolated along TfL&#x27;s own route geometry and shown on an Oracle Analytics Cloud map">
 
   <div class="post-intro">
-    <p>This is the seventh post in the AI Data Platform series. The <a href="https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-gold-layer-arrivals-board.html">previous post</a> built <code>tfl.gold.arrivals_board</code>, a live view of the next buses at every stop, and connected it to Oracle Analytics Cloud. What it couldn't do was say <em>where</em> anything is: TfL's arrivals feed carries stop IDs and names, but no coordinates. This post adds them. First a reference table with the location of every stop on every bus line, then an estimate of where each bus on line 25 actually is right now, drawn along the real road it drives on.</p>
+    <p>This is the seventh post in the AI Data Platform series. The <a href="https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-gold-layer.html">previous post</a> built <code>tfl.gold.arrivals_board</code>, a live view of the next buses at every stop, and connected it to Oracle Analytics Cloud. What it couldn't do was say <em>where</em> anything is: TfL's arrivals feed carries stop IDs and names, but no coordinates. This post adds them. First a reference table with the location of every stop on every bus line, then an estimate of where each bus on line 25 actually is right now, drawn along the real road it drives on.</p>
   </div>
 
   <!--more-->
@@ -378,6 +378,6 @@ def resolve_id(naptan_id):
 
   <p>Scaling positions to every line is still open. The stop area problem and the nearest-point matching would both need another look at that scale. But for now, I want to try something different with what's already there. So far, every question I've asked this data has been SQL in a notebook or a workbook in OAC. In the next post, I'll connect Claude to Oracle Analytics Cloud through OAC's MCP server and simply <em>ask</em> about the live data in plain language.</p>
 
-  <p><em>Related: <a href="https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html">Just Streams: Real-Time Data Pipelines on OCI</a> (series intro), <a href="https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-silver-layer.html">Silver Layer: Spark Structured Streaming</a>, <a href="https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-gold-layer-arrivals-board.html">Gold Layer: The Arrivals Board and Oracle Analytics Cloud</a></em></p>
+  <p><em>Related: <a href="https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html">Just Streams: Real-Time Data Pipelines on OCI</a> (series intro), <a href="https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-silver-layer.html">Silver Layer: Spark Structured Streaming</a>, <a href="https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-gold-layer.html">Gold Layer: The Arrivals Board and Oracle Analytics Cloud</a></em></p>
 
 </article>

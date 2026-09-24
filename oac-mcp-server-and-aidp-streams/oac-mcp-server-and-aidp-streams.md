@@ -19,7 +19,7 @@ It's worth laying out how many pieces are between a bus in London and an answer 
 2. The stream producer pushes them into **OCI Streaming** ([stage 1](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-oci-streaming.html)).
 3. **Bronze** lands every message as-is ([stage 2](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-bronze-layer.html)).
 4. **Silver** keeps the latest prediction per bus, stop, line and direction ([stage 3](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-silver-layer.html)).
-5. **Gold** turns that into `arrivals_board` (a live view), `stations`, and `vehicle_positions` (recomputed every 30 seconds) ([stage 4a](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-gold-layer-arrivals-board.html), [stage 4b](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-gold-layer-stations.html)).
+5. **Gold** turns that into `arrivals_board` (a live view), `stations`, and `vehicle_positions` (recomputed every 30 seconds) ([stage 4a](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-gold-layer.html), [stage 4b](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-gold-layermovements.html)).
 6. **OAC** reads gold through the Oracle AI Data Platform connection, as three datasets.
 7. The **OAC MCP server** exposes those datasets as tools an AI assistant can call.
 8. **Claude** decides which tool to call, writes the query, and explains the result.
@@ -225,4 +225,4 @@ That's the pipeline running end to end: live TfL data through OCI Streaming, AID
 
 Next, I'll clean up the datasets based on what this conversation found, then come back to the open questions from the gold layer: positions for all bus lines, not just line 25, and fixing the `progress` cap so buses don't wait at stops on the map.
 
-*Related: [Just Streams: Real-Time Data Pipelines on OCI](https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html) (series intro), [Gold Layer: The Arrivals Board and Oracle Analytics Cloud](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-gold-layer-arrivals-board.html), [Gold Layer: Stations and Live Bus Positions](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-gold-layer-stations.html)*
+*Related: [Just Streams: Real-Time Data Pipelines on OCI](https://zigavaupot.blogspot.com/2026/08/ai-data-platform-series-just-streams.html) (series intro), [Gold Layer: The Arrivals Board and Oracle Analytics Cloud](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-gold-layer.html), [Gold Layer: Stations and Live Bus Positions](https://zigavaupot.blogspot.com/2026/09/ai-data-platform-series-gold-layermovements.html)*
